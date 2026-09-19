@@ -4,6 +4,8 @@ import {
   handleLocalBind,
   handleLocalLogs,
   handleLocalStatus,
+  handleLocalUpdate,
+  handleLocalUpdateCheck,
   handlePrinterConfig,
   handlePrinterDiscover,
   handlePrinterTest,
@@ -126,6 +128,15 @@ export async function startLocalHttpServer(options?: {
       }
       if (req.method === "GET" && path === "/local/health") {
         sendJson(res, 200, { ok: true });
+        return;
+      }
+      if (req.method === "GET" && path === "/local/update/check") {
+        sendJson(res, 200, handleLocalUpdateCheck());
+        return;
+      }
+      if (req.method === "POST" && path === "/local/update") {
+        const result = handleLocalUpdate();
+        sendJson(res, result.ok ? 202 : 400, result);
         return;
       }
 

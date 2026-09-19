@@ -1,11 +1,9 @@
 ; MJH Printer Platform — Inno Setup script
-; Output: MJH-Printer-Setup.exe
+; Output: dist\MJH Printer Setup.exe
 ; Requires: Inno Setup 6 (ISCC.exe)
 ; Build inputs (relative to this file):
-;   ..\..\mjh-printer-agent\release\MJH-Printer-Agent.exe
-;   ..\..\mjh-printer-agent\release\install.ps1 (+ sibling scripts)
-;   ..\..\mjh-printer-agent\release\config\printer.unbound.json
-;   ..\dist-client\  (electron-builder unpacked dir OR single Client EXE)
+;   ..\..\mjh-printer-agent\release\MJH-Printer-Agent.exe (+ scripts)
+;   ..\..\dist\client-build\win-unpacked\  (electron-builder --dir)
 
 #define MyAppName "MJH Printer"
 #define MyAppVersion "1.0.0"
@@ -21,8 +19,8 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\MJH Printer
 DefaultGroupName=满江红打印助手
 DisableProgramGroupPage=yes
-OutputDir=..\..\dist-installer
-OutputBaseFilename=MJH-Printer-Setup
+OutputDir=..\..\dist
+OutputBaseFilename=MJH Printer Setup
 Compression=lzma2
 SolidCompression=yes
 PrivilegesRequired=admin
@@ -40,7 +38,7 @@ Name: "desktopicon"; Description: "创建桌面快捷方式「满江红打印助
 Name: "autostart"; Description: "登录后在系统托盘启动打印助手（不弹窗）"; GroupDescription: "附加任务:"; Flags: checkedonce
 
 [Files]
-; --- Agent package (install.ps1 will copy EXE to Program Files\MJH Printer Agent) ---
+; --- Agent package (install.ps1 → Program Files\MJH Printer Agent) ---
 Source: "..\..\mjh-printer-agent\release\MJH-Printer-Agent.exe"; DestDir: "{tmp}\mjh-agent"; Flags: ignoreversion
 Source: "..\..\mjh-printer-agent\release\install.ps1"; DestDir: "{tmp}\mjh-agent"; Flags: ignoreversion
 Source: "..\..\mjh-printer-agent\release\update-agent.ps1"; DestDir: "{tmp}\mjh-agent"; Flags: ignoreversion
@@ -52,26 +50,26 @@ Source: "..\..\mjh-printer-agent\release\status.ps1"; DestDir: "{tmp}\mjh-agent"
 Source: "..\..\mjh-printer-agent\release\logs.ps1"; DestDir: "{tmp}\mjh-agent"; Flags: ignoreversion
 Source: "..\..\mjh-printer-agent\release\config\*"; DestDir: "{tmp}\mjh-agent\config"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; Updater copy under MJH Printer\updater
+; Staged updater package (for Local API POST /local/update)
 Source: "..\..\mjh-printer-agent\release\update-agent.ps1"; DestDir: "{app}\updater"; Flags: ignoreversion
 Source: "..\..\mjh-printer-agent\release\MJH-Printer-Agent.exe"; DestDir: "{app}\updater"; Flags: ignoreversion
+Source: "..\..\mjh-printer-agent\release\BUILD.txt"; DestDir: "{app}\updater"; Flags: ignoreversion skipifsourcedoesntexist
 
-; --- Client (electron-builder win-unpacked) ---
-Source: "..\release\win-unpacked\*"; DestDir: "{app}\client"; Flags: ignoreversion recursesubdirs createallsubdirs
+; --- Client → C:\Program Files\MJH Printer\ ---
+Source: "..\..\dist\client-build\win-unpacked\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\满江红打印助手"; Filename: "{app}\client\{#MyAppExeName}"
-Name: "{autodesktop}\满江红打印助手"; Filename: "{app}\client\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{group}\满江红打印助手"; Filename: "{app}\{#MyAppExeName}"
+Name: "{autodesktop}\满江红打印助手"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Registry]
-; Tray autostart (no window force — Client starts; tray hide is app behavior on close)
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "MJHPrinterClient"; ValueData: """{app}\client\{#MyAppExeName}"" --tray"; Flags: uninsdeletevalue; Tasks: autostart
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "MJHPrinterClient"; ValueData: """{app}\{#MyAppExeName}"" --tray"; Flags: uninsdeletevalue; Tasks: autostart
 
 [Run]
-; 1) Install Agent via existing install.ps1 (preserves ProgramData config)
+; 1) Install Agent (Task Scheduler + ProgramData preserved)
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{tmp}\mjh-agent\install.ps1"""; StatusMsg: "正在安装打印服务 (Printer Agent)..."; Flags: runhidden waituntilterminated
-; 2) Launch Client
-Filename: "{app}\client\{#MyAppExeName}"; Description: "打开满江红打印助手"; Flags: nowait postinstall skipifsilent
+; 2) Launch Client Wizard
+Filename: "{app}\{#MyAppExeName}"; Description: "打开满江红打印助手"; Flags: nowait postinstall skipifsilent
 
 [Code]
 function InitializeSetup(): Boolean;

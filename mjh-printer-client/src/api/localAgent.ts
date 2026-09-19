@@ -3,9 +3,11 @@ export const LOCAL_AGENT_BASE = "http://127.0.0.1:17890";
 export type LocalStatus = {
   version: string;
   build: string;
+  running: true;
   pid: number;
   startedAt: string | null;
   updatedAt: string | null;
+  lastSyncAt: string | null;
   bound: boolean;
   storeName: string | null;
   cloud: { online: boolean };
@@ -22,6 +24,13 @@ export type LocalStatus = {
     lastPrintAt: string | null;
     lastError: string | null;
   };
+};
+
+export type UpdateCheck = {
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+  notes: string | null;
 };
 
 export type DiscoverHit = {
@@ -86,5 +95,11 @@ export const localAgent = {
     request<{ ok: boolean; message?: string; error?: string }>("/local/printer/config", {
       method: "POST",
       body: JSON.stringify({ ip, port }),
+    }),
+  checkUpdate: () => request<UpdateCheck>("/local/update/check"),
+  applyUpdate: () =>
+    request<{ ok: boolean; message?: string; error?: string }>("/local/update", {
+      method: "POST",
+      body: "{}",
     }),
 };

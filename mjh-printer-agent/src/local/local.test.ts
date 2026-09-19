@@ -37,6 +37,40 @@ test("handleLocalStatus never exposes token/storeId/agentId", async () => {
   assert.ok(status.printer.ip);
   assert.equal(typeof status.bound, "boolean");
   assert.ok("storeName" in status);
+  assert.equal(status.running, true);
+  assert.ok("lastSyncAt" in status);
+});
+
+test("compareVersions and update check expose no secrets", async () => {
+  const { compareVersions, handleUpdateCheck } = await import("./update.js");
+  assert.equal(compareVersions("2.4.0", "2.3.0"), 1);
+  assert.equal(compareVersions("2.3.0", "2.4.0"), -1);
+  assert.equal(compareVersions("2.4.0", "2.4.0"), 0);
+  const check = handleUpdateCheck();
+  const text = JSON.stringify(check);
+  assert.equal(/"token"/i.test(text), false);
+  assert.ok(check.currentVersion);
+  assert.ok(check.latestVersion);
+  assert.equal(typeof check.updateAvailable, "boolean");
+});
+
+test("GET /local/update/check via http", async () => {
+  const port = 17992;
+  const api = await startLocalHttpServer({ host: "127.0.0.1", port });
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/local/update/check`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      currentVersion: string;
+      latestVersion: string;
+      updateAvailable: boolean;
+    };
+    assert.ok(body.currentVersion);
+    assert.equal(typeof body.updateAvailable, "boolean");
+    assert.equal(JSON.stringify(body).includes("token"), false);
+  } finally {
+    await api.close();
+  }
 });
 
 test("handlePrinterConfig writes via atomic helper", async () => {

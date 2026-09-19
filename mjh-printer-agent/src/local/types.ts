@@ -6,9 +6,13 @@ export const LOCAL_API_PORT = 17890;
 export type LocalStatusResponse = {
   version: string;
   build: string;
+  /** Always true when Local API answers. */
+  running: true;
   pid: number;
   startedAt: string | null;
   updatedAt: string | null;
+  /** Best-effort last cloud sync (poll / claim). */
+  lastSyncAt: string | null;
   /** True when agent.token (or env token) is configured. */
   bound: boolean;
   storeName: string | null;
@@ -30,6 +34,13 @@ export type LocalStatusResponse = {
     lastPrintAt: string | null;
     lastError: string | null;
   };
+};
+
+export type LocalUpdateCheckResponse = {
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+  notes: string | null;
 };
 
 export type LocalLogsResponse = {

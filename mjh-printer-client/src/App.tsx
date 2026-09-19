@@ -1,13 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
-import { localAgent, type DiscoverHit, type LocalStatus } from "./api/localAgent";
+import {
+  localAgent,
+  type DiscoverHit,
+  type LocalStatus,
+  type UpdateCheck,
+} from "./api/localAgent";
 import { Wizard } from "./wizard/Wizard";
 
-type Tab = "dashboard" | "printer" | "logs";
+type Tab = "dashboard" | "printer" | "logs" | "settings";
 
 const WIZARD_DONE_KEY = "mjh_wizard_done";
 
 function Dot({ ok }: { ok: boolean }) {
   return <span className={`dot ${ok ? "ok" : "bad"}`} aria-hidden />;
+}
+
+function formatTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString();
 }
 
 export function App() {
@@ -22,6 +34,8 @@ export function App() {
   const [portDraft, setPortDraft] = useState("9100");
   const [toast, setToast] = useState<string | null>(null);
   const [showWizard, setShowWizard] = useState<boolean | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(null);
+  const [clientVersion, setClientVersion] = useState<string>("1.0.0");
 
   const refresh = useCallback(async () => {
     try {
@@ -69,6 +83,27 @@ export function App() {
     const t = setInterval(() => void refresh(), 4000);
     return () => clearInterval(t);
   }, [refresh, showWizard]);
+
+  useEffect(() => {
+    const baked =
+      typeof __MJH_CLIENT_VERSION__ !== "undefined" ? __MJH_CLIENT_VERSION__ : "1.0.0";
+    setClientVersion(baked);
+    void window.mjhDesktop?.getVersion?.().then((v) => {
+      if (v) setClientVersion(v);
+    });
+  }, []);
+
+  useEffect(() => {
+    const unsub = window.mjhDesktop?.onNavigate?.((next) => {
+      if (next === "dashboard" || next === "printer" || next === "logs" || next === "settings") {
+        setShowWizard(false);
+        setTab(next);
+      }
+    });
+    return () => {
+      if (typeof unsub === "function") unsub();
+    };
+  }, []);
 
   function onWizardComplete() {
     localStorage.setItem(WIZARD_DONE_KEY, "1");
@@ -135,6 +170,39 @@ export function App() {
     }
   }
 
+  async function onCheckUpdate() {
+    setBusy("正在检查更新…");
+    setToast(null);
+    try {
+      const info = await localAgent.checkUpdate();
+      setUpdateInfo(info);
+      setToast(
+        info.updateAvailable
+          ? `发现新版本 ${info.latestVersion}`
+          : `已是最新（${info.currentVersion}）`,
+      );
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onApplyUpdate() {
+    setBusy("正在启动 Agent 更新…");
+    setToast(null);
+    try {
+      const r = await localAgent.applyUpdate();
+      setToast(r.ok ? r.message || "更新已启动，请稍候" : r.error || "更新失败");
+      // Agent restarts — poll until back
+      setTimeout(() => void refresh(), 8000);
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   useEffect(() => {
     if (tab === "logs") void onLoadLogs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -155,6 +223,7 @@ export function App() {
   const cloudOk = Boolean(status?.cloud.online);
   const printerOk = Boolean(status?.printer.online);
   const bound = Boolean(status?.bound);
+  const running = Boolean(agentUp && status?.running);
 
   return (
     <div className="app">
@@ -176,6 +245,9 @@ export function App() {
           <button className={tab === "logs" ? "active" : ""} onClick={() => setTab("logs")}>
             日志
           </button>
+          <button className={tab === "settings" ? "active" : ""} onClick={() => setTab("settings")}>
+            设置
+          </button>
         </nav>
       </header>
 
@@ -193,10 +265,15 @@ export function App() {
         <main className="panel">
           <section className="card hero">
             <div className="row">
-              <Dot ok={agentUp} />
+              <Dot ok={running} />
               <div>
-                <div className="label">服务状态</div>
-                <div className="value">{agentUp ? "运行中" : "未连接"}</div>
+                <div className="label">Agent 运行状态</div>
+                <div className="value">{running ? "运行中" : "未连接"}</div>
+                <div className="muted">
+                  版本 {status?.version ?? "—"}
+                  {status?.build ? ` · ${status.build}` : ""}
+                  {status?.pid ? ` · PID ${status.pid}` : ""}
+                </div>
               </div>
             </div>
             {!agentUp && (
@@ -212,9 +289,9 @@ export function App() {
               <div className="row">
                 <Dot ok={bound} />
                 <div>
-                  <div className="label">绑定状态</div>
-                  <div className="value">{bound ? "已绑定" : "未绑定"}</div>
-                  {status?.storeName && <div className="muted">{status.storeName}</div>}
+                  <div className="label">绑定门店</div>
+                  <div className="value">{bound ? status?.storeName || "已绑定" : "未绑定"}</div>
+                  <div className="muted">{bound ? "已绑定" : "请完成向导配对"}</div>
                 </div>
               </div>
             </section>
@@ -222,7 +299,7 @@ export function App() {
               <div className="row">
                 <Dot ok={cloudOk} />
                 <div>
-                  <div className="label">云端</div>
+                  <div className="label">Cloud 连接</div>
                   <div className="value">{cloudOk ? "已连接" : "离线 / 未知"}</div>
                 </div>
               </div>
@@ -231,10 +308,11 @@ export function App() {
               <div className="row">
                 <Dot ok={printerOk} />
                 <div>
-                  <div className="label">打印机</div>
+                  <div className="label">打印机连接</div>
                   <div className="value">{status?.printer.model ?? "—"}</div>
                   <div className="muted">
                     {status ? `${status.printer.ip}:${status.printer.port}` : "—"}
+                    {printerOk ? " · 在线" : " · 离线"}
                   </div>
                 </div>
               </div>
@@ -242,9 +320,15 @@ export function App() {
           </div>
 
           <section className="card">
-            <div className="label">Agent 版本</div>
-            <div className="value">{status?.version ?? "—"}</div>
-            <div className="muted">{status?.build ?? ""}</div>
+            <div className="label">最近同步</div>
+            <div className="value">{formatTime(status?.lastSyncAt)}</div>
+            <div className="muted">
+              轮询 {formatTime(status?.worker.lastPollAt)} · 领取{" "}
+              {formatTime(status?.worker.lastClaimAt)}
+            </div>
+            {status?.worker.lastError && (
+              <p className="hint">最近错误：{status.worker.lastError}</p>
+            )}
           </section>
 
           <div className="actions">
@@ -254,8 +338,8 @@ export function App() {
             <button disabled={!agentUp} onClick={() => setTab("printer")}>
               打印机设置
             </button>
-            <button disabled={!agentUp} onClick={() => setTab("logs")}>
-              查看日志
+            <button disabled={!agentUp} onClick={() => setTab("settings")}>
+              检查更新
             </button>
             <button disabled={!!busy} onClick={() => void refresh()}>
               刷新
@@ -283,7 +367,7 @@ export function App() {
 
           <section className="card">
             <h2>自动发现</h2>
-            <p className="hint">扫描本机网段 TCP 9100（厨房 ESC/POS）</p>
+            <p className="hint">扫描本机网段 TCP 9100（厨房 ESC/POS · XP-N160II）</p>
             <button disabled={!agentUp || !!busy} onClick={() => void onDiscover()}>
               扫描打印机
             </button>
@@ -292,7 +376,7 @@ export function App() {
                 <li key={`${p.ip}:${p.port}`}>
                   <div>
                     <strong>{p.ip}</strong>
-                    <span className="muted"> :{p.port} · ONLINE</span>
+                    <span className="muted"> :{p.port} · ONLINE · XP-N160II</span>
                   </div>
                   <button disabled={!!busy} onClick={() => void onUsePrinter(p.ip, p.port)}>
                     使用此打印机
@@ -315,6 +399,62 @@ export function App() {
               </button>
             </div>
             <pre className="logs">{logs.length ? logs.join("\n") : "（空）"}</pre>
+          </section>
+        </main>
+      )}
+
+      {tab === "settings" && (
+        <main className="panel">
+          <section className="card">
+            <h2>关于</h2>
+            <div className="label">Client 版本</div>
+            <div className="value">{clientVersion}</div>
+            <div className="muted">MJH Printer Client · Control Plane</div>
+            <div className="label" style={{ marginTop: 12 }}>
+              Agent 版本
+            </div>
+            <div className="value">{status?.version ?? "—"}</div>
+            <div className="muted">{status?.build ?? ""}</div>
+          </section>
+
+          <section className="card">
+            <h2>Agent 更新</h2>
+            <p className="hint">
+              通过本机 Agent API 检查与安装更新。Client 不会自行复制 EXE。
+            </p>
+            <div className="grid" style={{ marginTop: 12 }}>
+              <div>
+                <div className="label">当前版本</div>
+                <div className="value">
+                  {updateInfo?.currentVersion ?? status?.version ?? "—"}
+                </div>
+              </div>
+              <div>
+                <div className="label">最新版本</div>
+                <div className="value">{updateInfo?.latestVersion ?? "—"}</div>
+              </div>
+            </div>
+            {updateInfo?.notes && (
+              <div style={{ marginTop: 12 }}>
+                <div className="label">更新说明</div>
+                <p className="sub">{updateInfo.notes}</p>
+              </div>
+            )}
+            <div className="actions" style={{ marginTop: 16 }}>
+              <button
+                className="primary"
+                disabled={!agentUp || !!busy}
+                onClick={() => void onCheckUpdate()}
+              >
+                检查更新
+              </button>
+              <button
+                disabled={!agentUp || !!busy || !updateInfo?.updateAvailable}
+                onClick={() => void onApplyUpdate()}
+              >
+                立即更新
+              </button>
+            </div>
           </section>
         </main>
       )}

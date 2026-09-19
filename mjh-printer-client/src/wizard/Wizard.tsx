@@ -162,7 +162,8 @@ export function Wizard({ onComplete }: Props) {
             <p className="wiz-eyebrow">满江红 · 厨房打印</p>
             <h1>欢迎使用满江红打印助手</h1>
             <p className="sub">
-              本向导将帮助你完成环境检查、门店绑定、打印机发现与测试打印。大约需要几分钟。
+              本向导：检测 Agent → 输入注册码 → 绑定门店 → 扫描打印机 → 选择 XP-N160II →
+              测试打印 → 进入控制台。全程无需 PowerShell。
             </p>
             <div className="actions">
               <button className="primary" type="button" onClick={() => setStep(2)}>
@@ -174,8 +175,8 @@ export function Wizard({ onComplete }: Props) {
 
         {step === 2 && (
           <section className="card wizard-card">
-            <h1>环境检查</h1>
-            <p className="sub">确认本机 Agent 与打印机状态。Agent Local API 通过后方可继续。</p>
+            <h1>检测 Agent</h1>
+            <p className="sub">确认本机打印服务 Local API（127.0.0.1:17890）可用。</p>
             <ul className="wiz-checks">
               <li>
                 <div>
@@ -263,8 +264,8 @@ export function Wizard({ onComplete }: Props) {
 
         {step === 4 && (
           <section className="card wizard-card">
-            <h1>发现打印机</h1>
-            <p className="sub">扫描本机网段 TCP 9100，选择厨房打印机。</p>
+            <h1>选择打印机</h1>
+            <p className="sub">扫描本机网段 TCP 9100，选择厨房 XP-N160II。</p>
             <div className="actions" style={{ marginBottom: 12 }}>
               <button type="button" disabled={!!busy} onClick={() => void onDiscover()}>
                 重新扫描
@@ -275,7 +276,7 @@ export function Wizard({ onComplete }: Props) {
                 <li key={`${p.ip}:${p.port}`}>
                   <div>
                     <strong>{p.ip}</strong>
-                    <span className="muted"> :{p.port} · ONLINE</span>
+                    <span className="muted"> :{p.port} · ONLINE · XP-N160II</span>
                   </div>
                   <button
                     className="primary"
@@ -324,7 +325,7 @@ export function Wizard({ onComplete }: Props) {
                 disabled={!!busy}
                 onClick={() => void onTestPrint()}
               >
-                发送测试打印
+                发送测试打印并进入控制台
               </button>
             </div>
           </section>

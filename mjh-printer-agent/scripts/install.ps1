@@ -5,7 +5,13 @@ $ErrorActionPreference = "Stop"
 
 $ProductName = "MJH Printer Agent"
 $TaskName = "MJH Printer Agent"
-$InstallDir = Join-Path $env:ProgramFiles $ProductName
+# Always target 64-bit Program Files (NSIS 32-bit may set ProgramFiles → Program Files (x86)).
+$ProgramFiles64 = if ($env:ProgramW6432 -and $env:ProgramW6432.Trim().Length -gt 0) {
+  $env:ProgramW6432
+} else {
+  ${env:ProgramFiles}
+}
+$InstallDir = Join-Path $ProgramFiles64 $ProductName
 $ProgramDataDir = Join-Path $env:ProgramData $ProductName
 $ConfigDir = Join-Path $ProgramDataDir "config"
 $DataDir = Join-Path $ProgramDataDir "data"
@@ -135,8 +141,13 @@ if (-not (Test-MjhProgramDataWritable -DataDir $DataDir -LogsDir $LogsDir)) {
 }
 Write-Host "ACL OK (SYSTEM+Administrators Full; Users Read)."
 
-# 4) Copy EXE only
+# 4) Copy EXE + update script (Local API POST /local/update invokes update-agent.ps1)
 Copy-Item -Force $SourceExe (Join-Path $InstallDir $ExeName)
+$UpdateScriptSrc = Join-Path $PackageRoot "update-agent.ps1"
+if (Test-Path $UpdateScriptSrc) {
+  Copy-Item -Force $UpdateScriptSrc (Join-Path $InstallDir "update-agent.ps1")
+  Write-Host "update-agent.ps1 installed beside EXE"
+}
 Write-Host "EXE installed to $InstallDir"
 
 # 5) Preserve existing ProgramData config (especially agent.token)

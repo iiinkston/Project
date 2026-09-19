@@ -15,6 +15,7 @@ import { AGENT_BUILD, AGENT_VERSION } from "../version.js";
 import { runTestPrint } from "../printer/run-test-print.js";
 import { logger } from "../logger.js";
 import { discoverPrinters9100 } from "./discover.js";
+import { handleUpdateApply, handleUpdateCheck } from "./update.js";
 import type {
   LocalBindBody,
   LocalBindResponse,
@@ -24,6 +25,7 @@ import type {
   LocalOkResponse,
   LocalPrinterConfigBody,
   LocalStatusResponse,
+  LocalUpdateCheckResponse,
 } from "./types.js";
 
 const SENSITIVE =
@@ -55,12 +57,18 @@ export async function handleLocalStatus(): Promise<LocalStatusResponse> {
   const status = await readStatusFile(resolveStatusPath());
   const bound = hasTokenConfigured(file);
 
+  const lastPollAt = status?.worker.lastPollAt ?? null;
+  const lastClaimAt = status?.worker.lastClaimAt ?? null;
+  const lastSyncAt = lastClaimAt || lastPollAt || status?.updatedAt || null;
+
   const body: LocalStatusResponse = {
     version: AGENT_VERSION,
     build: AGENT_BUILD,
+    running: true,
     pid: status?.pid ?? process.pid,
     startedAt: status?.startedAt ?? null,
     updatedAt: status?.updatedAt ?? null,
+    lastSyncAt,
     bound,
     storeName: file.store.name?.trim() || null,
     cloud: {
@@ -76,12 +84,24 @@ export async function handleLocalStatus(): Promise<LocalStatusResponse> {
       pending: 0,
     },
     worker: {
-      lastPollAt: status?.worker.lastPollAt ?? null,
-      lastClaimAt: status?.worker.lastClaimAt ?? null,
+      lastPollAt,
+      lastClaimAt,
       lastPrintAt: status?.worker.lastPrintAt ?? null,
       lastError: status?.worker.lastError ?? null,
     },
   };
+  assertNoSecrets(body);
+  return body;
+}
+
+export function handleLocalUpdateCheck(): LocalUpdateCheckResponse {
+  const body = handleUpdateCheck();
+  assertNoSecrets(body);
+  return body;
+}
+
+export function handleLocalUpdate(): LocalOkResponse | LocalErrorResponse {
+  const body = handleUpdateApply();
   assertNoSecrets(body);
   return body;
 }

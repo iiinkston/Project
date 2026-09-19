@@ -1,22 +1,23 @@
-# Build MJH-Printer-Setup.exe
+# Build MJH Printer Setup.exe + copy Client.exe into dist/
 #
 # Prerequisites:
 # - Agent: pnpm build:exe in mjh-printer-agent
-# - Client: pnpm dist:win in mjh-printer-client (electron-builder)
-# - Inno Setup 6: ISCC.exe on PATH or at default install path
+# - Client: pnpm dist:win in mjh-printer-client
+# - Inno Setup 6: ISCC.exe
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $Client = Join-Path $Root "mjh-printer-client"
 $AgentRelease = Join-Path $Root "mjh-printer-agent\release"
-$OutDir = Join-Path $Root "dist-installer"
+$DistDir = Join-Path $Root "dist"
+$Unpacked = Join-Path $DistDir "client-build\win-unpacked"
 
 Write-Host "=== MJH Printer Setup build ==="
 
 if (-not (Test-Path (Join-Path $AgentRelease "MJH-Printer-Agent.exe"))) {
   throw "Missing Agent EXE. Run: cd mjh-printer-agent; pnpm build:exe"
 }
-if (-not (Test-Path (Join-Path $Client "release\win-unpacked"))) {
+if (-not (Test-Path $Unpacked)) {
   throw "Missing Client win-unpacked. Run: cd mjh-printer-client; pnpm dist:win"
 }
 
@@ -33,11 +34,20 @@ if (-not $iscc) {
   throw "Inno Setup 6 not found. Install from https://jrsoftware.org/isinfo.php"
 }
 
-New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
+
+# Standalone Client.exe for dist/
+$clientSrc = Join-Path $Unpacked "MJH Printer Client.exe"
+$clientDst = Join-Path $DistDir "MJH Printer Client.exe"
+if (-not (Test-Path $clientSrc)) { throw "Missing $clientSrc" }
+Copy-Item -Force $clientSrc $clientDst
+Write-Host "Copied Client → $clientDst"
+
 & $iscc (Join-Path $Client "installer\setup.iss")
 if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
 
-$setup = Join-Path $OutDir "MJH-Printer-Setup.exe"
-if (-not (Test-Path $setup)) { throw "Setup EXE not produced" }
+$setup = Join-Path $DistDir "MJH Printer Setup.exe"
+if (-not (Test-Path $setup)) { throw "Setup EXE not produced at $setup" }
 Write-Host "OK: $setup"
-Get-Item $setup | Format-List FullName, Length, LastWriteTime
+Write-Host "OK: $clientDst"
+Get-Item $setup, $clientDst | Format-List FullName, Length, LastWriteTime

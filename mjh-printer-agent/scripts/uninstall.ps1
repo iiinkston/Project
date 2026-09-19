@@ -6,7 +6,13 @@ param(
 $ErrorActionPreference = "Stop"
 $ProductName = "MJH Printer Agent"
 $TaskName = "MJH Printer Agent"
-$InstallDir = Join-Path $env:ProgramFiles $ProductName
+$ProgramFiles64 = if ($env:ProgramW6432 -and $env:ProgramW6432.Trim().Length -gt 0) {
+  $env:ProgramW6432
+} else {
+  ${env:ProgramFiles}
+}
+$InstallDir = Join-Path $ProgramFiles64 $ProductName
+$InstallDirX86 = Join-Path ${env:ProgramFiles(x86)} $ProductName
 $ProgramDataDir = Join-Path $env:ProgramData $ProductName
 
 Write-Host "=== Uninstalling $ProductName ==="
@@ -19,13 +25,19 @@ if ($existing) {
   Write-Host "Scheduled task removed."
 }
 
-Get-CimInstance Win32_Process |
+Get-Process -Name "MJH-Printer-Agent" -ErrorAction SilentlyContinue |
+  Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
+
+Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
   Where-Object { $_.CommandLine -like "*MJH-Printer-Agent.exe*" } |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
-if (Test-Path $InstallDir) {
-  Remove-Item -Recurse -Force $InstallDir
-  Write-Host "Removed $InstallDir"
+foreach ($dir in @($InstallDir, $InstallDirX86)) {
+  if ($dir -and (Test-Path $dir)) {
+    Remove-Item -Recurse -Force $dir
+    Write-Host "Removed $dir"
+  }
 }
 
 if ($PurgeData) {

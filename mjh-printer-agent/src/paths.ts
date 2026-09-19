@@ -9,10 +9,12 @@ function defaultProgramDataRoot(): string {
     : join("C:\\ProgramData", "MJH Printer Agent");
 }
 
-const PROGRAM_FILES_ROOT =
-  process.env["ProgramFiles"] && process.env["ProgramFiles"].length > 0
-    ? join(process.env["ProgramFiles"], "MJH Printer Agent")
-    : join("C:\\Program Files", "MJH Printer Agent");
+const PROGRAM_FILES_ROOT = (() => {
+  const w6432 = process.env.ProgramW6432?.trim();
+  const pf = process.env.ProgramFiles?.trim();
+  const root = w6432 || pf || "C:\\Program Files";
+  return join(root, "MJH Printer Agent");
+})();
 
 export type RuntimePaths = {
   configPath: string;

@@ -8,7 +8,12 @@ param(
 $ErrorActionPreference = "Continue"
 $ProductName = "MJH Printer Agent"
 $TaskName = "MJH Printer Agent"
-$InstallDir = Join-Path $env:ProgramFiles $ProductName
+$ProgramFiles64 = if ($env:ProgramW6432 -and $env:ProgramW6432.Trim().Length -gt 0) {
+  $env:ProgramW6432
+} else {
+  ${env:ProgramFiles}
+}
+$InstallDir = Join-Path $ProgramFiles64 $ProductName
 $ExePath = Join-Path $InstallDir "MJH-Printer-Agent.exe"
 $PreviousPath = Join-Path $InstallDir "MJH-Printer-Agent.previous.exe"
 $ProgramDataDir = Join-Path $env:ProgramData $ProductName

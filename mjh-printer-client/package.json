@@ -1,6 +1,6 @@
 {
   "name": "mjh-printer-client",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "满江红打印助手 — Windows GUI Control Plane for MJH Printer Agent",
   "author": "满江红",
@@ -13,7 +13,8 @@
     "electron:dev": "concurrently -k -n vite,electron -c cyan,magenta \"vite\" \"wait-on http://127.0.0.1:5173 && node scripts/start-electron.mjs\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dist:win": "pnpm build && electron-builder --win --x64 --dir",
-    "dist:setup": "pnpm build && node installer/stage-agent.mjs && electron-builder --win --x64"
+    "dist:setup": "pnpm build && node installer/stage-agent.mjs && electron-builder --win --x64",
+    "dist:all": "pnpm dist:win && node installer/copy-client-artifact.mjs"
   },
   "dependencies": {
     "react": "^19.0.0",
@@ -33,8 +34,12 @@
   "build": {
     "appId": "com.manjianghong.printer-client",
     "productName": "MJH Printer Client",
+    "buildVersion": "1.0.0",
+    "extraMetadata": {
+      "version": "1.0.0"
+    },
     "directories": {
-      "output": "../out-setup"
+      "output": "../dist/client-build"
     },
     "files": [
       "dist/**/*",
@@ -55,16 +60,18 @@
           "arch": ["x64"]
         }
       ],
-      "signAndEditExecutable": false
+      "signAndEditExecutable": false,
+      "executableName": "MJH Printer Client"
     },
     "nsis": {
       "oneClick": false,
+      "perMachine": true,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "满江红打印助手",
       "runAfterFinish": true,
       "include": "installer/nsis-agent.nsh",
-      "artifactName": "MJH-Printer-Setup.${ext}"
+      "artifactName": "MJH Printer Setup.${ext}"
     },
     "asar": true,
     "publish": null,
