@@ -10,6 +10,7 @@ import {
 } from "../config.js";
 import { mergeFileConfig, writeFileConfigAtomic } from "../config-write.js";
 import { pairWithCloud } from "../cloud/pair.js";
+import { extractApiErrorMessage } from "../cloud/api-error.js";
 import { readStatusFile } from "../status.js";
 import { AGENT_BUILD, AGENT_VERSION } from "../version.js";
 import { runTestPrint } from "../printer/run-test-print.js";
@@ -171,13 +172,20 @@ export async function handlePrinterConfig(
   return { ok: true, message: `Printer endpoint set to ${ip}:${port}` };
 }
 
+function resolveBindCode(body: LocalBindBody): string {
+  const code = typeof body.code === "string" ? body.code.trim() : "";
+  if (code) return code;
+  return typeof body.pairCode === "string" ? body.pairCode.trim() : "";
+}
+
 /**
  * Bind store via Cloud pair API. Token stays in ProgramData only.
+ * Rebind with the same long-lived code overwrites store/agent/token.
  */
 export async function handleLocalBind(
   body: LocalBindBody,
 ): Promise<LocalBindResponse | LocalErrorResponse> {
-  const code = typeof body.code === "string" ? body.code.trim() : "";
+  const code = resolveBindCode(body);
   if (!code || code.length < 4) {
     return { ok: false, error: "请输入有效的门店注册码" };
   }
@@ -212,19 +220,14 @@ export async function handleLocalBind(
     assertNoSecrets(response);
     return response;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = error instanceof Error ? error.message : extractApiErrorMessage(error);
     const status =
       typeof error === "object" && error && "status" in error
         ? Number((error as { status: number }).status)
         : 0;
-    logger.warn(`[LocalAPI] bind failed status=${status || "?"} msg=${message}`, "LOCAL");
-    if (status === 409) {
-      return { ok: false, error: "注册码已使用，请联系总部重新发放" };
-    }
-    if (status === 404) {
-      return { ok: false, error: "注册码无效" };
-    }
-    return { ok: false, error: message || "绑定失败" };
+    const safe = message.replace(/"token"\s*:\s*"[^"]*"/gi, '"token":"***"');
+    logger.warn(`[LocalAPI] bind failed status=${status || "?"} msg=${safe}`, "LOCAL");
+    return { ok: false, error: safe || "绑定失败" };
   }
 }
 

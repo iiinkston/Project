@@ -65,7 +65,10 @@ export type LocalPrinterConfigBody = {
 };
 
 export type LocalBindBody = {
-  code: string;
+  /** Preferred. */
+  code?: string;
+  /** Legacy Client field. Used only when code is empty. */
+  pairCode?: string;
 };
 
 export type LocalBindResponse = {

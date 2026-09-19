@@ -1,14 +1,35 @@
 import { z } from "zod";
+import { extractApiErrorMessage } from "./api-error.js";
 
 /** Cloud → Agent one-time pair payload (never forward token to Client). */
-export const cloudPairResponseSchema = z.object({
-  success: z.literal(true),
-  storeName: z.string().min(1),
-  agentName: z.string().min(1),
-  storeId: z.string().min(1),
-  agentId: z.string().min(1),
-  token: z.string().min(8),
-});
+/**
+ * Production Cloud currently returns storeName/storeId/agentKey/token
+ * without success/agentName/agentId. Accept both shapes.
+ */
+export const cloudPairResponseSchema = z
+  .object({
+    success: z.literal(true).optional(),
+    storeName: z.string().min(1),
+    agentName: z.string().min(1).optional(),
+    storeId: z.string().min(1),
+    agentId: z.string().min(1).optional(),
+    agentKey: z.string().min(1).optional(),
+    token: z.string().min(8),
+  })
+  .transform((value) => {
+    const agentId = value.agentId || value.agentKey;
+    if (!agentId) {
+      throw new Error("pair response missing agent id");
+    }
+    return {
+      success: true as const,
+      storeName: value.storeName,
+      agentName: value.agentName || agentId,
+      storeId: value.storeId,
+      agentId,
+      token: value.token,
+    };
+  });
 
 export type CloudPairResponse = z.infer<typeof cloudPairResponseSchema>;
 
@@ -39,7 +60,7 @@ export async function pairWithCloud(options: {
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify({ pairCode: options.pairCode.trim() }),
+      body: JSON.stringify({ code: options.pairCode.trim() }),
       signal: controller.signal,
     });
 
@@ -54,13 +75,7 @@ export async function pairWithCloud(options: {
     }
 
     if (!response.ok) {
-      let detail = text.slice(0, 200);
-      if (typeof parsed === "object" && parsed && "error" in parsed) {
-        detail = String((parsed as { error: unknown }).error);
-      } else if (typeof parsed === "object" && parsed && "message" in parsed) {
-        detail = String((parsed as { message: unknown }).message);
-      }
-      throw Object.assign(new Error(detail || `HTTP ${response.status}`), {
+      throw Object.assign(new Error(extractApiErrorMessage(parsed)), {
         status: response.status,
       });
     }

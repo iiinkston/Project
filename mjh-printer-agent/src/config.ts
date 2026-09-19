@@ -20,7 +20,10 @@ const fileConfigSchema = z.object({
   }),
   agent: z.object({
     id: z.string().min(1),
-    token: z.string().min(1).optional(),
+    token: z.preprocess(
+      (value) => (value === "" ? null : value),
+      z.string().min(1).nullable().optional(),
+    ),
     pollIntervalMs: z.number().int().positive(),
   }),
   printer: z.object({

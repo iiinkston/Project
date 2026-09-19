@@ -1,6 +1,6 @@
 {
   "name": "mjh-printer-agent",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "description": "MJH Printer Agent — Windows production EXE for Man Jiang Hong kitchen printing",
   "private": true,
   "type": "module",

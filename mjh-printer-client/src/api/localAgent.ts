@@ -45,6 +45,15 @@ export type BindResult = {
   agentName: string;
 };
 
+function errorText(error: unknown): string {
+  if (typeof error === "string" && error.trim() && error !== "[object Object]") return error;
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  return "";
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${LOCAL_AGENT_BASE}${path}`, {
     ...init,
@@ -64,7 +73,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     const err =
       typeof body === "object" && body && "error" in body
-        ? String((body as { error: string }).error)
+        ? errorText((body as { error: unknown }).error)
         : text.slice(0, 200);
     throw new Error(err || `HTTP ${res.status}`);
   }

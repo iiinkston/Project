@@ -146,7 +146,7 @@ async function runAgent(options: { dryRun?: boolean } = {}): Promise<void> {
   logger.info(`[MJH] Agent: ${file.agent.id}`, "STARTUP");
   logger.info(`[MJH] Store: ${file.store.id}`, "STARTUP");
   if (unbound) {
-    logger.info("[MJH] Bound: NO — waiting for Local API /local/bind", "STARTUP");
+    logger.info("waiting for binding", "STARTUP");
   } else if (config) {
     logger.info(`[MJH] Token source: ${resolveAgentTokenSource(config)}`, "STARTUP");
   }
