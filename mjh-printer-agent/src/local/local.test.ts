@@ -35,6 +35,8 @@ test("handleLocalStatus never exposes token/storeId/agentId", async () => {
   assert.equal(/agentId/i.test(text), false);
   assert.ok(status.version);
   assert.ok(status.printer.ip);
+  assert.equal(typeof status.bound, "boolean");
+  assert.ok("storeName" in status);
 });
 
 test("handlePrinterConfig writes via atomic helper", async () => {

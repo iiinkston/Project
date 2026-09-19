@@ -2,17 +2,22 @@ import { createReadStream, existsSync, readdirSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 import {
+  hasTokenConfigured,
   loadFileConfig,
   resolveConfigPath,
   resolveLogsDir,
   resolveStatusPath,
 } from "../config.js";
 import { mergeFileConfig, writeFileConfigAtomic } from "../config-write.js";
+import { pairWithCloud } from "../cloud/pair.js";
 import { readStatusFile } from "../status.js";
 import { AGENT_BUILD, AGENT_VERSION } from "../version.js";
 import { runTestPrint } from "../printer/run-test-print.js";
+import { logger } from "../logger.js";
 import { discoverPrinters9100 } from "./discover.js";
 import type {
+  LocalBindBody,
+  LocalBindResponse,
   LocalDiscoverResponse,
   LocalErrorResponse,
   LocalLogsResponse,
@@ -33,7 +38,6 @@ export function redactLogLine(line: string): string {
       return "***";
     })
     .replace(/[A-Za-z0-9+/]{20,}={0,2}/g, (m) => {
-      // Heuristic: long base64-ish blobs (tokens) — keep short alphanumerics
       if (m.length >= 32) return "***";
       return m;
     });
@@ -41,7 +45,7 @@ export function redactLogLine(line: string): string {
 
 function assertNoSecrets(payload: unknown): void {
   const text = JSON.stringify(payload);
-  if (/"token"\s*:/i.test(text) || /storeId|agentId/i.test(text)) {
+  if (/"token"\s*:/i.test(text) || /"storeId"|"agentId"/i.test(text)) {
     throw new Error("internal: local API response leaked forbidden fields");
   }
 }
@@ -49,6 +53,7 @@ function assertNoSecrets(payload: unknown): void {
 export async function handleLocalStatus(): Promise<LocalStatusResponse> {
   const file = loadFileConfig(resolveConfigPath());
   const status = await readStatusFile(resolveStatusPath());
+  const bound = hasTokenConfigured(file);
 
   const body: LocalStatusResponse = {
     version: AGENT_VERSION,
@@ -56,6 +61,8 @@ export async function handleLocalStatus(): Promise<LocalStatusResponse> {
     pid: status?.pid ?? process.pid,
     startedAt: status?.startedAt ?? null,
     updatedAt: status?.updatedAt ?? null,
+    bound,
+    storeName: file.store.name?.trim() || null,
     cloud: {
       online: Boolean(status?.cloud.online),
     },
@@ -66,7 +73,6 @@ export async function handleLocalStatus(): Promise<LocalStatusResponse> {
       online: Boolean(status?.printer.online),
     },
     queue: {
-      // Agent is pull-based; pending count is not tracked locally.
       pending: 0,
     },
     worker: {
@@ -104,7 +110,6 @@ export async function handleLocalLogs(limitRaw?: number): Promise<LocalLogsRespo
   for await (const line of rl) {
     lines.push(redactLogLine(line));
     if (lines.length > limit * 2) {
-      // Keep memory bounded while streaming large files
       lines.splice(0, lines.length - limit);
     }
   }
@@ -144,6 +149,63 @@ export async function handlePrinterConfig(
   const merged = mergeFileConfig(base, { printerIp: ip, printerPort: port });
   await writeFileConfigAtomic(configPath, merged);
   return { ok: true, message: `Printer endpoint set to ${ip}:${port}` };
+}
+
+/**
+ * Bind store via Cloud pair API. Token stays in ProgramData only.
+ */
+export async function handleLocalBind(
+  body: LocalBindBody,
+): Promise<LocalBindResponse | LocalErrorResponse> {
+  const code = typeof body.code === "string" ? body.code.trim() : "";
+  if (!code || code.length < 4) {
+    return { ok: false, error: "请输入有效的门店注册码" };
+  }
+
+  const configPath = resolveConfigPath();
+  const base = loadFileConfig(configPath);
+
+  try {
+    const paired = await pairWithCloud({
+      baseUrl: base.cloud.baseUrl,
+      pairCode: code,
+    });
+
+    const merged = mergeFileConfig(base, {
+      storeId: paired.storeId,
+      storeName: paired.storeName,
+      agentId: paired.agentId,
+      token: paired.token,
+    });
+    await writeFileConfigAtomic(configPath, merged);
+
+    logger.info(
+      `[LocalAPI] bind ok store=${paired.storeName} agent=${paired.agentName}`,
+      "LOCAL",
+    );
+
+    const response: LocalBindResponse = {
+      success: true,
+      storeName: paired.storeName,
+      agentName: paired.agentName,
+    };
+    assertNoSecrets(response);
+    return response;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const status =
+      typeof error === "object" && error && "status" in error
+        ? Number((error as { status: number }).status)
+        : 0;
+    logger.warn(`[LocalAPI] bind failed status=${status || "?"} msg=${message}`, "LOCAL");
+    if (status === 409) {
+      return { ok: false, error: "注册码已使用，请联系总部重新发放" };
+    }
+    if (status === 404) {
+      return { ok: false, error: "注册码无效" };
+    }
+    return { ok: false, error: message || "绑定失败" };
+  }
 }
 
 export function parseJsonBody<T>(raw: string): T {

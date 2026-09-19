@@ -1,0 +1,25 @@
+# 满江红打印机代理 MJH Printer Agent v2.3.0
+
+Build: `2026-09-19T10:03:25Z`
+
+## 安装（管理员 PowerShell）
+
+```powershell
+cd <本目录>
+.\install.ps1
+```
+
+## 升级
+
+```powershell
+.\update-agent.ps1 -Source ".\MJH-Printer-Agent.exe"
+```
+
+## 诊断
+
+```powershell
+.\MJH-Printer-Agent.exe version
+.\MJH-Printer-Agent.exe doctor
+.\MJH-Printer-Agent.exe agent:diagnose
+.\MJH-Printer-Agent.exe agent:start --dry-run
+```

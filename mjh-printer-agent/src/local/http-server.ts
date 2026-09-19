@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { logger } from "../logger.js";
 import {
+  handleLocalBind,
   handleLocalLogs,
   handleLocalStatus,
   handlePrinterConfig,
@@ -8,7 +9,12 @@ import {
   handlePrinterTest,
   parseJsonBody,
 } from "./router.js";
-import { LOCAL_API_HOST, LOCAL_API_PORT, type LocalPrinterConfigBody } from "./types.js";
+import {
+  LOCAL_API_HOST,
+  LOCAL_API_PORT,
+  type LocalBindBody,
+  type LocalPrinterConfigBody,
+} from "./types.js";
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -108,6 +114,14 @@ export async function startLocalHttpServer(options?: {
         const body = parseJsonBody<LocalPrinterConfigBody>(raw);
         const result = await handlePrinterConfig(body);
         sendJson(res, result.ok ? 200 : 400, result);
+        return;
+      }
+      if (req.method === "POST" && path === "/local/bind") {
+        const raw = await readBody(req);
+        const body = parseJsonBody<LocalBindBody>(raw);
+        const result = await handleLocalBind(body);
+        const ok = "success" in result && result.success === true;
+        sendJson(res, ok ? 200 : 400, result);
         return;
       }
       if (req.method === "GET" && path === "/local/health") {

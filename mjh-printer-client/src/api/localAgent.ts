@@ -6,6 +6,8 @@ export type LocalStatus = {
   pid: number;
   startedAt: string | null;
   updatedAt: string | null;
+  bound: boolean;
+  storeName: string | null;
   cloud: { online: boolean };
   printer: {
     model: string;
@@ -26,6 +28,12 @@ export type DiscoverHit = {
   ip: string;
   port: number;
   reachable: true;
+};
+
+export type BindResult = {
+  success: true;
+  storeName: string;
+  agentName: string;
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -59,6 +67,11 @@ export const localAgent = {
   status: () => request<LocalStatus>("/local/status"),
   logs: (lines = 100) =>
     request<{ logs: string[] }>(`/local/logs?lines=${lines}`),
+  bind: (code: string) =>
+    request<BindResult>("/local/bind", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
   testPrint: () =>
     request<{ ok: boolean; message?: string; error?: string }>("/local/printer/test", {
       method: "POST",

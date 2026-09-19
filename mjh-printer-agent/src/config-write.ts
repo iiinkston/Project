@@ -15,6 +15,7 @@ const SID_USERS = "*S-1-5-32-545";
 
 export type ConfigSetPatch = {
   storeId?: string;
+  storeName?: string;
   agentId?: string;
   token?: string;
   pollIntervalMs?: number;
@@ -46,6 +47,10 @@ export function mergeFileConfig(base: FileConfig, patch: ConfigSetPatch): FileCo
   return {
     store: {
       id: patch.storeId?.trim() || base.store.id,
+      name:
+        patch.storeName !== undefined
+          ? patch.storeName.trim() || undefined
+          : base.store.name,
     },
     agent: {
       id: patch.agentId?.trim() || base.agent.id,

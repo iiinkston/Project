@@ -6,6 +6,8 @@ node_modules/
 dist/
 build/
 out/
+out-setup/
+dist-installer/
 release/
 
 # Vite cache

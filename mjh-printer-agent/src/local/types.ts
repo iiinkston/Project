@@ -9,6 +9,9 @@ export type LocalStatusResponse = {
   pid: number;
   startedAt: string | null;
   updatedAt: string | null;
+  /** True when agent.token (or env token) is configured. */
+  bound: boolean;
+  storeName: string | null;
   cloud: {
     online: boolean;
   };
@@ -48,6 +51,16 @@ export type LocalDiscoverResponse = {
 export type LocalPrinterConfigBody = {
   ip: string;
   port?: number;
+};
+
+export type LocalBindBody = {
+  code: string;
+};
+
+export type LocalBindResponse = {
+  success: true;
+  storeName: string;
+  agentName: string;
 };
 
 export type LocalOkResponse = {

@@ -213,6 +213,10 @@ mkdirSync(join(releaseDir, "config"), { recursive: true });
 
 copyFileSync(exeOut, join(releaseDir, "MJH-Printer-Agent.exe"));
 copyFileSync(join(root, "config", "printer.json"), join(releaseDir, "config", "printer.json"));
+copyFileSync(
+  join(root, "config", "printer.unbound.json"),
+  join(releaseDir, "config", "printer.unbound.json"),
+);
 
 const scriptFiles = [
   "install.ps1",

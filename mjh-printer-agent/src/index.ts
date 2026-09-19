@@ -1,6 +1,8 @@
 import {
+  hasTokenConfigured,
   loadConfig,
   loadFileConfig,
+  readPackageVersion,
   resolveAgentTokenSource,
   resolveLockPath,
   resolveStatePath,
@@ -58,10 +60,20 @@ async function runAgent(options: { dryRun?: boolean } = {}): Promise<void> {
   const paths = resolveRuntimePaths();
   configureLogger({ logsDir: paths.logsDir, retentionDays: 14, alsoConsole: true });
 
-  const config = loadConfig(paths.configPath);
-  configureLogger({ logsDir: config.logsDir, retentionDays: 14, alsoConsole: true });
+  const file = loadFileConfig(paths.configPath);
+  const unbound = !hasTokenConfigured(file);
 
-  const lock = new AgentLock(resolveLockPath(), config.version);
+  // Unbound agents still expose Local API for wizard bind; skip cloud worker.
+  let config: ReturnType<typeof loadConfig> | null = null;
+  if (!unbound) {
+    config = loadConfig(paths.configPath);
+    configureLogger({ logsDir: config.logsDir, retentionDays: 14, alsoConsole: true });
+  } else {
+    configureLogger({ logsDir: paths.logsDir, retentionDays: 14, alsoConsole: true });
+  }
+
+  const version = config?.version ?? readPackageVersion();
+  const lock = new AgentLock(resolveLockPath(), version);
 
   try {
     await lock.acquire();
@@ -82,15 +94,15 @@ async function runAgent(options: { dryRun?: boolean } = {}): Promise<void> {
 
   const startedAt = new Date().toISOString();
   const status = new StatusStore(resolveStatusPath(), {
-    version: config.version,
+    version,
     pid: process.pid,
     startedAt,
     updatedAt: startedAt,
     cloud: { online: false },
     printer: {
       online: false,
-      ip: config.printer.ip,
-      port: config.printer.port,
+      ip: file.printer.ip,
+      port: file.printer.port,
     },
     worker: {},
   });
@@ -112,7 +124,7 @@ async function runAgent(options: { dryRun?: boolean } = {}): Promise<void> {
     await mkdir(paths.dataDir, { recursive: true });
     await writeFile(
       join(paths.dataDir, "dry-run-ok.json"),
-      `${JSON.stringify({ pid: process.pid, startedAt, version: config.version }, null, 2)}\n`,
+      `${JSON.stringify({ pid: process.pid, startedAt, version }, null, 2)}\n`,
       "utf8",
     );
     console.log("DRY-RUN PASS");
@@ -123,25 +135,27 @@ async function runAgent(options: { dryRun?: boolean } = {}): Promise<void> {
     return;
   }
 
-  const tokenSource = resolveAgentTokenSource(config);
-
   logger.info("[MJH] Printer Agent starting", "STARTUP");
-  logger.info(`[MJH] Version: ${config.version}`, "STARTUP");
+  logger.info(`[MJH] Version: ${version}`, "STARTUP");
   logger.info(`[MJH] Build: ${AGENT_BUILD}`, "STARTUP");
   logger.info(`[MJH] PID: ${process.pid}`, "STARTUP");
   logger.info(`[MJH] Started: ${startedAt}`, "STARTUP");
   logger.info("[MJH] Config loaded", "STARTUP");
-  logger.info(`[MJH] Config: ${config.configPath}`, "STARTUP");
-  logger.info(`[MJH] Cloud: ${config.cloud.baseUrl}`, "STARTUP");
-  logger.info(`[MJH] Agent: ${config.agent.id}`, "STARTUP");
-  logger.info(`[MJH] Store: ${config.store.id}`, "STARTUP");
-  logger.info(`[MJH] Token source: ${tokenSource}`, "STARTUP");
+  logger.info(`[MJH] Config: ${paths.configPath}`, "STARTUP");
+  logger.info(`[MJH] Cloud: ${file.cloud.baseUrl}`, "STARTUP");
+  logger.info(`[MJH] Agent: ${file.agent.id}`, "STARTUP");
+  logger.info(`[MJH] Store: ${file.store.id}`, "STARTUP");
+  if (unbound) {
+    logger.info("[MJH] Bound: NO — waiting for Local API /local/bind", "STARTUP");
+  } else if (config) {
+    logger.info(`[MJH] Token source: ${resolveAgentTokenSource(config)}`, "STARTUP");
+  }
   logger.info(
-    `[MJH] Printer: ${config.printer.model} @ ${config.printer.ip}:${config.printer.port}`,
+    `[MJH] Printer: ${file.printer.model} @ ${file.printer.ip}:${file.printer.port}`,
     "STARTUP",
   );
-  logger.info(`[MJH] Data: ${config.dataDir}`, "STARTUP");
-  logger.info(`[MJH] Logs: ${config.logsDir}`, "STARTUP");
+  logger.info(`[MJH] Data: ${paths.dataDir}`, "STARTUP");
+  logger.info(`[MJH] Logs: ${paths.logsDir}`, "STARTUP");
 
   let localApi: LocalHttpServer | undefined;
   try {
@@ -149,11 +163,10 @@ async function runAgent(options: { dryRun?: boolean } = {}): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.warn(`[MJH] Local API failed to start: ${message}`, "STARTUP");
-    // Non-fatal: cloud worker still runs for kitchen printing.
   }
 
-  const state = new StateStore(resolveStatePath());
-  const worker = new PrintWorker(config, state, { status });
+  const state = config ? new StateStore(resolveStatePath()) : null;
+  const worker = config && state ? new PrintWorker(config, state, { status }) : null;
 
   let shuttingDown = false;
   const shutdown = async () => {
@@ -162,7 +175,7 @@ async function runAgent(options: { dryRun?: boolean } = {}): Promise<void> {
     }
     shuttingDown = true;
     logger.info("[MJH] Shutting down...", "SHUTDOWN");
-    worker.stop();
+    worker?.stop();
     if (localApi) {
       try {
         await localApi.close();
@@ -198,6 +211,14 @@ async function runAgent(options: { dryRun?: boolean } = {}): Promise<void> {
     logger.error(`[MJH] uncaughtException: ${error.message}`, "WORKER_ERROR");
     void shutdown().finally(() => process.exit(1));
   });
+
+  if (!worker) {
+    logger.info("[MJH] Unbound mode: Local API only (no cloud poll until bind)", "STARTUP");
+    await new Promise<void>(() => {
+      // Keep process alive until signal
+    });
+    return;
+  }
 
   try {
     await worker.start();

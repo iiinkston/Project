@@ -1,0 +1,335 @@
+import { useCallback, useEffect, useState } from "react";
+import { localAgent, type DiscoverHit } from "../api/localAgent";
+
+type Props = {
+  onComplete: () => void;
+};
+
+type Step = 1 | 2 | 3 | 4 | 5;
+
+type CheckState = "idle" | "checking" | "pass" | "fail";
+
+function Badge({ state }: { state: CheckState }) {
+  if (state === "checking" || state === "idle") {
+    return <span className="wiz-badge pending">检测中</span>;
+  }
+  if (state === "pass") {
+    return <span className="wiz-badge pass">PASS</span>;
+  }
+  return <span className="wiz-badge fail">FAIL</span>;
+}
+
+export function Wizard({ onComplete }: Props) {
+  const [step, setStep] = useState<Step>(1);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const [apiOk, setApiOk] = useState<CheckState>("idle");
+  const [netOk, setNetOk] = useState<CheckState>("idle");
+  const [printerOk, setPrinterOk] = useState<CheckState>("idle");
+
+  const [pairCode, setPairCode] = useState("");
+  const [boundStore, setBoundStore] = useState<string | null>(null);
+
+  const [discovered, setDiscovered] = useState<DiscoverHit[]>([]);
+  const [printerSet, setPrinterSet] = useState(false);
+
+  const runEnvCheck = useCallback(async () => {
+    setApiOk("checking");
+    setNetOk("checking");
+    setPrinterOk("checking");
+    setError(null);
+
+    try {
+      await localAgent.health();
+      setApiOk("pass");
+    } catch {
+      setApiOk("fail");
+      setNetOk("fail");
+      setPrinterOk("fail");
+      return;
+    }
+
+    try {
+      const s = await localAgent.status();
+      // 网络：status 可成功拉取即 PASS
+      setNetOk("pass");
+      setPrinterOk(s.printer.online ? "pass" : "fail");
+    } catch {
+      setNetOk("fail");
+      setPrinterOk("fail");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (step !== 2) return;
+    void runEnvCheck();
+    const t = setInterval(() => void runEnvCheck(), 3000);
+    return () => clearInterval(t);
+  }, [step, runEnvCheck]);
+
+  async function onBind() {
+    const code = pairCode.trim();
+    if (!code) {
+      setError("请输入门店注册码");
+      return;
+    }
+    setBusy("正在绑定门店…");
+    setError(null);
+    try {
+      const r = await localAgent.bind(code);
+      setBoundStore(r.storeName);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onDiscover() {
+    setBusy("正在扫描局域网…");
+    setError(null);
+    try {
+      const r = await localAgent.discover();
+      setDiscovered(r.printers);
+      if (r.printers.length === 0) {
+        setError("未发现打印机，可稍后在控制面板中重试");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onUsePrinter(ip: string, port: number) {
+    setBusy("正在保存打印机…");
+    setError(null);
+    try {
+      const r = await localAgent.setPrinter(ip, port);
+      if (!r.ok) throw new Error(r.error || "保存失败");
+      setPrinterSet(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onTestPrint() {
+    setBusy("正在测试打印…");
+    setError(null);
+    try {
+      const r = await localAgent.testPrint();
+      if (!r.ok) throw new Error(r.error || "测试打印失败");
+      onComplete();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  useEffect(() => {
+    if (step === 4 && discovered.length === 0 && !busy) {
+      void onDiscover();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+
+  return (
+    <div className="wizard">
+      <div className="wizard-shell">
+        <div className="wizard-progress">
+          {[1, 2, 3, 4, 5].map((n) => (
+            <span key={n} className={`wiz-step-dot ${step === n ? "current" : ""} ${step > n ? "done" : ""}`} />
+          ))}
+          <span className="wiz-step-label">步骤 {step} / 5</span>
+        </div>
+
+        {busy && <div className="busy">{busy}</div>}
+        {error && (
+          <div className="toast" role="alert">
+            {error}
+            <button type="button" onClick={() => setError(null)}>
+              ×
+            </button>
+          </div>
+        )}
+
+        {step === 1 && (
+          <section className="card wizard-card">
+            <p className="wiz-eyebrow">满江红 · 厨房打印</p>
+            <h1>欢迎使用满江红打印助手</h1>
+            <p className="sub">
+              本向导将帮助你完成环境检查、门店绑定、打印机发现与测试打印。大约需要几分钟。
+            </p>
+            <div className="actions">
+              <button className="primary" type="button" onClick={() => setStep(2)}>
+                开始配置
+              </button>
+            </div>
+          </section>
+        )}
+
+        {step === 2 && (
+          <section className="card wizard-card">
+            <h1>环境检查</h1>
+            <p className="sub">确认本机 Agent 与打印机状态。Agent Local API 通过后方可继续。</p>
+            <ul className="wiz-checks">
+              <li>
+                <div>
+                  <div className="label">Agent Local API</div>
+                  <div className="muted">127.0.0.1:17890</div>
+                </div>
+                <Badge state={apiOk} />
+              </li>
+              <li>
+                <div>
+                  <div className="label">网络</div>
+                  <div className="muted">status 可访问</div>
+                </div>
+                <Badge state={netOk} />
+              </li>
+              <li>
+                <div>
+                  <div className="label">打印机在线</div>
+                  <div className="muted">厨房 ESC/POS</div>
+                </div>
+                <Badge state={printerOk} />
+              </li>
+            </ul>
+            <div className="actions">
+              <button type="button" onClick={() => void runEnvCheck()} disabled={!!busy}>
+                重新检测
+              </button>
+              <button
+                className="primary"
+                type="button"
+                disabled={apiOk !== "pass"}
+                onClick={() => setStep(3)}
+              >
+                继续
+              </button>
+            </div>
+          </section>
+        )}
+
+        {step === 3 && (
+          <section className="card wizard-card">
+            <h1>绑定门店</h1>
+            <p className="sub">请输入总部发放的门店注册码。绑定成功后不会显示令牌。</p>
+            {boundStore ? (
+              <>
+                <div className="wiz-success">
+                  <div className="label">已绑定门店</div>
+                  <div className="value">{boundStore}</div>
+                </div>
+                <div className="actions">
+                  <button className="primary" type="button" onClick={() => setStep(4)}>
+                    继续
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <label className="field">
+                  <span>注册码</span>
+                  <input
+                    value={pairCode}
+                    onChange={(e) => setPairCode(e.target.value)}
+                    placeholder="请输入配对码"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </label>
+                <div className="actions">
+                  <button type="button" onClick={() => setStep(2)}>
+                    上一步
+                  </button>
+                  <button
+                    className="primary"
+                    type="button"
+                    disabled={!!busy || !pairCode.trim()}
+                    onClick={() => void onBind()}
+                  >
+                    绑定
+                  </button>
+                </div>
+              </>
+            )}
+          </section>
+        )}
+
+        {step === 4 && (
+          <section className="card wizard-card">
+            <h1>发现打印机</h1>
+            <p className="sub">扫描本机网段 TCP 9100，选择厨房打印机。</p>
+            <div className="actions" style={{ marginBottom: 12 }}>
+              <button type="button" disabled={!!busy} onClick={() => void onDiscover()}>
+                重新扫描
+              </button>
+            </div>
+            <ul className="list">
+              {discovered.map((p) => (
+                <li key={`${p.ip}:${p.port}`}>
+                  <div>
+                    <strong>{p.ip}</strong>
+                    <span className="muted"> :{p.port} · ONLINE</span>
+                  </div>
+                  <button
+                    className="primary"
+                    type="button"
+                    disabled={!!busy}
+                    onClick={() => void onUsePrinter(p.ip, p.port)}
+                  >
+                    使用此打印机
+                  </button>
+                </li>
+              ))}
+              {discovered.length === 0 && <li className="muted">尚未发现设备</li>}
+            </ul>
+            {printerSet && (
+              <div className="wiz-success" style={{ marginTop: 14 }}>
+                <div className="value">打印机已保存</div>
+              </div>
+            )}
+            <div className="actions" style={{ marginTop: 16 }}>
+              <button type="button" onClick={() => setStep(3)}>
+                上一步
+              </button>
+              <button
+                className="primary"
+                type="button"
+                disabled={!printerSet}
+                onClick={() => setStep(5)}
+              >
+                继续
+              </button>
+            </div>
+          </section>
+        )}
+
+        {step === 5 && (
+          <section className="card wizard-card">
+            <h1>测试打印</h1>
+            <p className="sub">向厨房打印机发送一张测试页，确认链路畅通。</p>
+            <div className="actions">
+              <button type="button" onClick={() => setStep(4)}>
+                上一步
+              </button>
+              <button
+                className="primary"
+                type="button"
+                disabled={!!busy}
+                onClick={() => void onTestPrint()}
+              >
+                发送测试打印
+              </button>
+            </div>
+          </section>
+        )}
+      </div>
+    </div>
+  );
+}

@@ -1,6 +1,6 @@
 {
   "name": "mjh-printer-agent",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "MJH Printer Agent — Windows production EXE for Man Jiang Hong kitchen printing",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "build:exe": "node scripts/build-exe.mjs",
-    "test": "tsx --test src/config.test.ts src/config-write.test.ts src/paths.test.ts src/cli/commands.test.ts src/cli/resolve-command.test.ts src/cli/pkg-compat.test.ts src/jobs/agent-lock.test.ts src/jobs/state-store.test.ts src/jobs/worker.test.ts src/printer/money.test.ts src/printer/receipt.test.ts src/status.test.ts src/process/agent-process.test.ts src/local/local.test.ts"
+    "test": "tsx --test src/config.test.ts src/config-write.test.ts src/paths.test.ts src/cli/commands.test.ts src/cli/resolve-command.test.ts src/cli/pkg-compat.test.ts src/jobs/agent-lock.test.ts src/jobs/state-store.test.ts src/jobs/worker.test.ts src/printer/money.test.ts src/printer/receipt.test.ts src/status.test.ts src/process/agent-process.test.ts src/local/local.test.ts src/cloud/pair.test.ts"
   },
   "bin": {
     "mjh-printer-agent": "dist/bundle.cjs"

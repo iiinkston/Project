@@ -15,6 +15,8 @@ export type ResolvedToken = {
 const fileConfigSchema = z.object({
   store: z.object({
     id: z.string().min(1),
+    /** Display name from pairing — safe to show in Local API. */
+    name: z.string().optional(),
   }),
   agent: z.object({
     id: z.string().min(1),

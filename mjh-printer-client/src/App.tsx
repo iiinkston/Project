@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { localAgent, type DiscoverHit, type LocalStatus } from "./api/localAgent";
+import { Wizard } from "./wizard/Wizard";
 
 type Tab = "dashboard" | "printer" | "logs";
+
+const WIZARD_DONE_KEY = "mjh_wizard_done";
 
 function Dot({ ok }: { ok: boolean }) {
   return <span className={`dot ${ok ? "ok" : "bad"}`} aria-hidden />;
@@ -18,6 +21,7 @@ export function App() {
   const [ipDraft, setIpDraft] = useState("");
   const [portDraft, setPortDraft] = useState("9100");
   const [toast, setToast] = useState<string | null>(null);
+  const [showWizard, setShowWizard] = useState<boolean | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -28,18 +32,49 @@ export function App() {
       setIpDraft(s.printer.ip);
       setPortDraft(String(s.printer.port));
       setError(null);
+      return s;
     } catch (e) {
       setAgentUp(false);
       setStatus(null);
       setError(e instanceof Error ? e.message : String(e));
+      return null;
     }
   }, []);
 
   useEffect(() => {
-    void refresh();
+    let cancelled = false;
+    (async () => {
+      const s = await refresh();
+      if (cancelled) return;
+
+      const done = localStorage.getItem(WIZARD_DONE_KEY) === "1";
+      if (s?.bound) {
+        localStorage.setItem(WIZARD_DONE_KEY, "1");
+        setShowWizard(false);
+        return;
+      }
+      if (!done || s?.bound === false) {
+        setShowWizard(true);
+        return;
+      }
+      setShowWizard(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refresh]);
+
+  useEffect(() => {
+    if (showWizard !== false) return;
     const t = setInterval(() => void refresh(), 4000);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [refresh, showWizard]);
+
+  function onWizardComplete() {
+    localStorage.setItem(WIZARD_DONE_KEY, "1");
+    setShowWizard(false);
+    void refresh();
+  }
 
   async function onTestPrint() {
     setBusy("正在测试打印…");
@@ -105,15 +140,31 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
+  if (showWizard === null) {
+    return (
+      <div className="app">
+        <p className="muted">正在连接本机 Agent…</p>
+      </div>
+    );
+  }
+
+  if (showWizard) {
+    return <Wizard onComplete={onWizardComplete} />;
+  }
+
   const cloudOk = Boolean(status?.cloud.online);
   const printerOk = Boolean(status?.printer.online);
+  const bound = Boolean(status?.bound);
 
   return (
     <div className="app">
       <header className="top">
         <div>
           <h1>满江红打印助手</h1>
-          <p className="sub">门店厨房打印 · 控制面板</p>
+          <p className="sub">
+            门店厨房打印 · 控制面板
+            {status?.storeName ? ` · ${status.storeName}` : ""}
+          </p>
         </div>
         <nav className="nav">
           <button className={tab === "dashboard" ? "active" : ""} onClick={() => setTab("dashboard")}>
@@ -159,6 +210,16 @@ export function App() {
           <div className="grid">
             <section className="card">
               <div className="row">
+                <Dot ok={bound} />
+                <div>
+                  <div className="label">绑定状态</div>
+                  <div className="value">{bound ? "已绑定" : "未绑定"}</div>
+                  {status?.storeName && <div className="muted">{status.storeName}</div>}
+                </div>
+              </div>
+            </section>
+            <section className="card">
+              <div className="row">
                 <Dot ok={cloudOk} />
                 <div>
                   <div className="label">云端</div>
@@ -178,12 +239,13 @@ export function App() {
                 </div>
               </div>
             </section>
-            <section className="card">
-              <div className="label">Agent 版本</div>
-              <div className="value">{status?.version ?? "—"}</div>
-              <div className="muted">{status?.build ?? ""}</div>
-            </section>
           </div>
+
+          <section className="card">
+            <div className="label">Agent 版本</div>
+            <div className="value">{status?.version ?? "—"}</div>
+            <div className="muted">{status?.build ?? ""}</div>
+          </section>
 
           <div className="actions">
             <button className="primary" disabled={!agentUp || !!busy} onClick={() => void onTestPrint()}>
