@@ -104,6 +104,10 @@ function Stop-AgentHard {
     Stop-Process -Force -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 1
 
+  # Extra pass: taskkill by image (covers SYSTEM/orphans WMI misses)
+  cmd /c "taskkill /IM MJH-Printer-Agent.exe /F /T >nul 2>&1"
+  Start-Sleep -Seconds 1
+
   if (Get-Process -Name "MJH-Printer-Agent" -ErrorAction SilentlyContinue) {
     throw "Old MJH-Printer-Agent.exe still running after stop"
   }

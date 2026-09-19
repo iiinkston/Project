@@ -35,7 +35,8 @@ test("pkg compatible: CLI runtime has no dynamic import()", () => {
       rel.includes("/process/") ||
       rel.includes("/jobs/agent-lock") ||
       rel.endsWith("/status.ts") ||
-      rel.includes("/config-write")
+      rel.includes("/config-write") ||
+      rel.includes("/local/")
     );
   });
   assert.ok(files.length > 0);

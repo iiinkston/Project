@@ -1,0 +1,154 @@
+import { createReadStream, existsSync, readdirSync } from "node:fs";
+import { createInterface } from "node:readline";
+import { join } from "node:path";
+import {
+  loadFileConfig,
+  resolveConfigPath,
+  resolveLogsDir,
+  resolveStatusPath,
+} from "../config.js";
+import { mergeFileConfig, writeFileConfigAtomic } from "../config-write.js";
+import { readStatusFile } from "../status.js";
+import { AGENT_BUILD, AGENT_VERSION } from "../version.js";
+import { runTestPrint } from "../printer/run-test-print.js";
+import { discoverPrinters9100 } from "./discover.js";
+import type {
+  LocalDiscoverResponse,
+  LocalErrorResponse,
+  LocalLogsResponse,
+  LocalOkResponse,
+  LocalPrinterConfigBody,
+  LocalStatusResponse,
+} from "./types.js";
+
+const SENSITIVE =
+  /(Bearer\s+[A-Za-z0-9+/=._-]+)|("token"\s*:\s*"[^"]*")|(Authorization:\s*\S+)/gi;
+
+export function redactLogLine(line: string): string {
+  return line
+    .replace(SENSITIVE, (m) => {
+      if (/^Bearer/i.test(m)) return "Bearer ***";
+      if (/^"token"/i.test(m)) return '"token":"***"';
+      if (/^Authorization:/i.test(m)) return "Authorization: ***";
+      return "***";
+    })
+    .replace(/[A-Za-z0-9+/]{20,}={0,2}/g, (m) => {
+      // Heuristic: long base64-ish blobs (tokens) — keep short alphanumerics
+      if (m.length >= 32) return "***";
+      return m;
+    });
+}
+
+function assertNoSecrets(payload: unknown): void {
+  const text = JSON.stringify(payload);
+  if (/"token"\s*:/i.test(text) || /storeId|agentId/i.test(text)) {
+    throw new Error("internal: local API response leaked forbidden fields");
+  }
+}
+
+export async function handleLocalStatus(): Promise<LocalStatusResponse> {
+  const file = loadFileConfig(resolveConfigPath());
+  const status = await readStatusFile(resolveStatusPath());
+
+  const body: LocalStatusResponse = {
+    version: AGENT_VERSION,
+    build: AGENT_BUILD,
+    pid: status?.pid ?? process.pid,
+    startedAt: status?.startedAt ?? null,
+    updatedAt: status?.updatedAt ?? null,
+    cloud: {
+      online: Boolean(status?.cloud.online),
+    },
+    printer: {
+      model: file.printer.model,
+      ip: file.printer.ip,
+      port: file.printer.port,
+      online: Boolean(status?.printer.online),
+    },
+    queue: {
+      // Agent is pull-based; pending count is not tracked locally.
+      pending: 0,
+    },
+    worker: {
+      lastPollAt: status?.worker.lastPollAt ?? null,
+      lastClaimAt: status?.worker.lastClaimAt ?? null,
+      lastPrintAt: status?.worker.lastPrintAt ?? null,
+      lastError: status?.worker.lastError ?? null,
+    },
+  };
+  assertNoSecrets(body);
+  return body;
+}
+
+export async function handleLocalLogs(limitRaw?: number): Promise<LocalLogsResponse> {
+  const limit = Math.min(Math.max(Number(limitRaw) || 100, 1), 1000);
+  const logsDir = resolveLogsDir();
+  if (!existsSync(logsDir)) {
+    return { logs: [] };
+  }
+
+  const files = readdirSync(logsDir)
+    .filter((n) => /^agent-\d{4}-\d{2}-\d{2}\.log$/.test(n))
+    .sort();
+  const latest = files[files.length - 1];
+  if (!latest) {
+    return { logs: [] };
+  }
+
+  const path = join(logsDir, latest);
+  const lines: string[] = [];
+  const rl = createInterface({
+    input: createReadStream(path, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+  for await (const line of rl) {
+    lines.push(redactLogLine(line));
+    if (lines.length > limit * 2) {
+      // Keep memory bounded while streaming large files
+      lines.splice(0, lines.length - limit);
+    }
+  }
+  const sliced = lines.slice(-limit);
+  const body = { logs: sliced };
+  assertNoSecrets(body);
+  return body;
+}
+
+export async function handlePrinterTest(): Promise<LocalOkResponse | LocalErrorResponse> {
+  const result = await runTestPrint();
+  if (!result.ok) {
+    return { ok: false, error: result.message };
+  }
+  return { ok: true, message: result.message };
+}
+
+export async function handlePrinterDiscover(): Promise<LocalDiscoverResponse> {
+  return discoverPrinters9100();
+}
+
+export async function handlePrinterConfig(
+  body: LocalPrinterConfigBody,
+): Promise<LocalOkResponse | LocalErrorResponse> {
+  const ip = typeof body.ip === "string" ? body.ip.trim() : "";
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) {
+    return { ok: false, error: "Invalid ip" };
+  }
+  const port =
+    body.port === undefined ? 9100 : Number.isInteger(body.port) ? body.port : Number.NaN;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return { ok: false, error: "Invalid port" };
+  }
+
+  const configPath = resolveConfigPath();
+  const base = loadFileConfig(configPath);
+  const merged = mergeFileConfig(base, { printerIp: ip, printerPort: port });
+  await writeFileConfigAtomic(configPath, merged);
+  return { ok: true, message: `Printer endpoint set to ${ip}:${port}` };
+}
+
+export function parseJsonBody<T>(raw: string): T {
+  if (!raw.trim()) {
+    throw new Error("Empty JSON body");
+  }
+  return JSON.parse(raw) as T;
+}

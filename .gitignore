@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+out/
+release/
+
+# Vite cache
+.vite/
+
+# Electron artifacts
+*.exe
+*.zip
+
+# Logs / env / OS
+*.log
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
+.env
+.env.*
+!.env.example

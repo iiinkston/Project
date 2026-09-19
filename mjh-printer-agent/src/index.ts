@@ -10,13 +10,6 @@ import { configureLogger, logger } from "./logger.js";
 import { AgentAlreadyRunningError, AgentLock } from "./jobs/agent-lock.js";
 import { PrintWorker } from "./jobs/worker.js";
 import { StateStore } from "./jobs/state-store.js";
-import { PrinterClient } from "./printer/printer.js";
-import {
-  buildKitchenTestReceipt,
-  buildKitchenReceiptV2,
-  buildCashierReceiptV2,
-} from "./printer/receipt.js";
-import type { PrintJob } from "./cloud/types.js";
 import { StatusStore } from "./status.js";
 import { resolveRuntimePaths } from "./paths.js";
 import {
@@ -34,92 +27,29 @@ import {
 import { resolveCommand, resolveDoctorFlags, resolveAgentStartDryRun } from "./cli/resolve-command.js";
 import { AGENT_BUILD } from "./version.js";
 import { markCurrentAsAgentProcess } from "./process/agent-process.js";
+import { runTestPrint } from "./printer/run-test-print.js";
+import { startLocalHttpServer, type LocalHttpServer } from "./local/http-server.js";
 import "./printer/encodings-ensure.js";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-function buildDemoPrintJob(): PrintJob {
-  const now = new Date().toISOString();
-  return {
-    id: `demo_${Date.now()}`,
-    orderId: `ord_demo_${Date.now()}`,
-    type: "KITCHEN_ORDER",
-    createdAt: now,
-    payload: {
-      fulfillmentType: "DINE_IN",
-      table: "12",
-      orderNumber: `MJH-DEMO-${Date.now().toString().slice(-6)}`,
-      createdAt: now,
-      currency: "MYR",
-      notes: "少辣 / no coriander / extra chopsticks",
-      items: [
-        {
-          name: "担担面 Dan Dan Noodles",
-          quantity: 1,
-          unitPrice: 1290,
-          lineTotal: 1290,
-          optionDetails: [{ name: "少辣", chargedAmount: 0 }],
-        },
-        {
-          name: "Beef Rendang",
-          quantity: 2,
-          unitPrice: 1800,
-          lineTotal: 3600,
-          notes: "medium spicy",
-        },
-      ],
-      subtotal: 4890,
-      serviceCharge: 0,
-      tax: 0,
-      total: 4890,
-    },
-  };
-}
-
 async function runPrinterTest(): Promise<void> {
   const { printer } = loadFileConfig();
-  const client = new PrinterClient(printer);
-
   logger.info(`[Printer] ${printer.model}`);
   logger.info(`[Printer] ${printer.ip}:${printer.port}`);
   logger.info("[Printer] Checking connection...");
 
-  try {
-    await client.testConnection();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.error("[Printer] Offline");
-    logger.error(message);
+  const result = await runTestPrint();
+  if (!result.ok) {
+    logger.error("[Printer] Offline or print failed");
+    logger.error(result.message);
     process.exitCode = 1;
     return;
   }
-
   logger.info("[Printer] Online");
-  logger.info("[Printer] Sending kitchen hardware test receipt...");
-
-  try {
-    await client.connect();
-    await client.send(buildKitchenTestReceipt());
-    logger.info("[Printer] Hardware test sent.");
-
-    // Full V2 kitchen + cashier (Chinese + English + money + notes) — same builders as cloud jobs.
-    const demo = buildDemoPrintJob();
-    logger.info(`[Printer] Sending V2 demo kitchen copy order=${demo.payload.orderNumber}...`);
-    await client.send(buildKitchenReceiptV2(demo));
-    await new Promise((r) => setTimeout(r, 500));
-    logger.info("[Printer] Sending V2 demo cashier copy...");
-    await client.send(buildCashierReceiptV2(demo));
-    logger.info("[Printer] Print jobs sent successfully (hardware + V2 demo).");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.error("[Printer] Print failed");
-    logger.error(message);
-    process.exitCode = 1;
-  } finally {
-    await client.close();
-  }
+  logger.info(`[Printer] ${result.message}`);
 }
 
 async function runAgent(options: { dryRun?: boolean } = {}): Promise<void> {
@@ -150,7 +80,6 @@ async function runAgent(options: { dryRun?: boolean } = {}): Promise<void> {
     await lock.release();
   };
 
-  // Immediately overwrite any stale status.json from a previous PID.
   const startedAt = new Date().toISOString();
   const status = new StatusStore(resolveStatusPath(), {
     version: config.version,
@@ -214,6 +143,15 @@ async function runAgent(options: { dryRun?: boolean } = {}): Promise<void> {
   logger.info(`[MJH] Data: ${config.dataDir}`, "STARTUP");
   logger.info(`[MJH] Logs: ${config.logsDir}`, "STARTUP");
 
+  let localApi: LocalHttpServer | undefined;
+  try {
+    localApi = await startLocalHttpServer();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn(`[MJH] Local API failed to start: ${message}`, "STARTUP");
+    // Non-fatal: cloud worker still runs for kitchen printing.
+  }
+
   const state = new StateStore(resolveStatePath());
   const worker = new PrintWorker(config, state, { status });
 
@@ -225,6 +163,13 @@ async function runAgent(options: { dryRun?: boolean } = {}): Promise<void> {
     shuttingDown = true;
     logger.info("[MJH] Shutting down...", "SHUTDOWN");
     worker.stop();
+    if (localApi) {
+      try {
+        await localApi.close();
+      } catch {
+        // ignore
+      }
+    }
     try {
       await status.patch((s) => {
         s.cloud.online = false;
