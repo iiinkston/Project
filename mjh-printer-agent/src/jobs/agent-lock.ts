@@ -1,5 +1,11 @@
-import { mkdir, open, readFile, unlink } from "node:fs/promises";
+import { mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { isMjhAgentPid, isPidAlive, listRelevantProcesses } from "../process/agent-process.js";
+
+function isClassifiedForeignProcess(pid: number): boolean {
+  const hit = listRelevantProcesses().find((p) => p.pid === pid);
+  return Boolean(hit && !hit.isMjhAgent);
+}
 
 export type AgentLockInfo = {
   pid: number;
@@ -17,32 +23,11 @@ export class AgentAlreadyRunningError extends Error {
   }
 }
 
-function isPidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) {
-    return false;
-  }
-
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    const code =
-      typeof error === "object" && error !== null && "code" in error
-        ? String((error as NodeJS.ErrnoException).code)
-        : undefined;
-    // EPERM: process exists but we cannot signal it — treat as alive.
-    if (code === "EPERM") {
-      return true;
-    }
-    return false;
-  }
-}
-
-async function readLock(filePath: string): Promise<AgentLockInfo | null> {
+export async function readAgentLock(filePath: string): Promise<AgentLockInfo | null> {
   try {
     const raw = await readFile(filePath, "utf8");
     const parsed = JSON.parse(raw) as Partial<AgentLockInfo>;
-    if (typeof parsed.pid !== "number") {
+    if (typeof parsed.pid !== "number" || !Number.isInteger(parsed.pid) || parsed.pid <= 0) {
       return null;
     }
     return {
@@ -57,7 +42,7 @@ async function readLock(filePath: string): Promise<AgentLockInfo | null> {
 
 /**
  * Atomically acquire a single-instance lock using O_EXCL create.
- * Stale locks (dead PID) are removed and acquisition retried once.
+ * Stale / unreadable / ACL-blocked locks are cleared when no live agent exists.
  */
 export class AgentLock {
   private held = false;
@@ -91,13 +76,16 @@ export class AgentLock {
       }
     }
 
-    const existing = await readLock(this.filePath);
+    const existing = await readAgentLock(this.filePath);
     if (existing && isPidAlive(existing.pid)) {
-      throw new AgentAlreadyRunningError(existing.pid);
+      const foreign = isClassifiedForeignProcess(existing.pid);
+      if (existing.pid === process.pid || isMjhAgentPid(existing.pid) || !foreign) {
+        throw new AgentAlreadyRunningError(existing.pid);
+      }
     }
 
-    // Stale lock — remove and retry exclusive create once.
-    await unlink(this.filePath).catch(() => undefined);
+    // No live owner for this lock file — force-clear stale/unreadable lock.
+    await this.forceClear();
 
     try {
       await this.createExclusive(info);
@@ -110,8 +98,10 @@ export class AgentLock {
           : undefined;
 
       if (code === "EEXIST") {
-        const raced = await readLock(this.filePath);
-        throw new AgentAlreadyRunningError(raced?.pid ?? 0);
+        // Last resort: overwrite in place when wx still fails (file marked read-only / ACL).
+        await writeFile(this.filePath, `${JSON.stringify(info, null, 2)}\n`, "utf8");
+        this.held = true;
+        return info;
       }
       throw error;
     }
@@ -124,7 +114,7 @@ export class AgentLock {
 
     this.held = false;
     try {
-      const current = await readLock(this.filePath);
+      const current = await readAgentLock(this.filePath);
       if (current && current.pid !== process.pid) {
         return;
       }
@@ -134,8 +124,15 @@ export class AgentLock {
     }
   }
 
+  private async forceClear(): Promise<void> {
+    try {
+      await unlink(this.filePath);
+    } catch {
+      // ignore — overwrite path handles residual file
+    }
+  }
+
   private async createExclusive(info: AgentLockInfo): Promise<void> {
-    // 'wx' => O_WRONLY | O_CREAT | O_EXCL (atomic create-if-absent)
     const handle = await open(this.filePath, "wx");
     try {
       await handle.writeFile(`${JSON.stringify(info, null, 2)}\n`, "utf8");

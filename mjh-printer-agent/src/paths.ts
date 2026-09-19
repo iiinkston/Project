@@ -1,12 +1,13 @@
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
-const PROGRAM_DATA_ROOT =
-  process.env.ProgramData && process.env.ProgramData.length > 0
+function defaultProgramDataRoot(): string {
+  return process.env.ProgramData && process.env.ProgramData.length > 0
     ? join(process.env.ProgramData, "MJH Printer Agent")
     : join("C:\\ProgramData", "MJH Printer Agent");
+}
 
 const PROGRAM_FILES_ROOT =
   process.env["ProgramFiles"] && process.env["ProgramFiles"].length > 0
@@ -29,12 +30,24 @@ export function isPackagedRuntime(): boolean {
   return Boolean(proc.pkg) || process.env.MJH_PACKAGED === "1";
 }
 
+/** Absolute ProgramData override for smoke/tests (`MJH_PROGRAMDATA_DIR`). */
+export function resolveProgramDataRoot(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env.MJH_PROGRAMDATA_DIR?.trim();
+  if (override) {
+    return isAbsolute(override) ? override : join(process.cwd(), override);
+  }
+  // Legacy: MJH_FORCE_PROGRAMDATA=1 forces default ProgramData (boolean).
+  // If value looks like a path, treat as override too.
+  const force = env.MJH_FORCE_PROGRAMDATA?.trim();
+  if (force && force !== "1" && force.toLowerCase() !== "true" && /[\\/]/.test(force)) {
+    return isAbsolute(force) ? force : join(process.cwd(), force);
+  }
+  return defaultProgramDataRoot();
+}
+
 export function getProjectRoot(): string {
-  // When bundled to CJS by esbuild, import.meta.url still works in our TS source
-  // but after CJS bundle __dirname is used via define — see getBundleDir().
   try {
     const here = dirname(fileURLToPath(import.meta.url));
-    // src/ → project root; dist/ → project root
     if (here.endsWith(`${join("dist")}`) || here.replace(/\\/g, "/").endsWith("/dist")) {
       return join(here, "..");
     }
@@ -76,39 +89,35 @@ export function resolveConfigPath(env: NodeJS.ProcessEnv = process.env): string 
     return env.MJH_CONFIG_PATH.trim();
   }
 
-  const programDataConfig = join(PROGRAM_DATA_ROOT, "config", "printer.json");
+  const programDataRoot = resolveProgramDataRoot(env);
+  const programDataConfig = join(programDataRoot, "config", "printer.json");
   const exeSideConfig = join(getExecutableDir(), "config", "printer.json");
   const projectConfig = join(getProjectRoot(), "config", "printer.json");
 
-  // Prefer ProgramData when it exists (production), else first available.
   const found = firstExisting(programDataConfig, exeSideConfig, projectConfig);
   return found ?? programDataConfig;
 }
 
 export function resolveRuntimePaths(env: NodeJS.ProcessEnv = process.env): RuntimePaths {
   const configPath = resolveConfigPath(env);
+  const programDataRoot = resolveProgramDataRoot(env);
+  const hasOverride = Boolean(env.MJH_PROGRAMDATA_DIR?.trim());
   const useProgramData =
+    hasOverride ||
     configPath.replace(/\\/g, "/").includes("/MJH Printer Agent/") ||
     configPath.toLowerCase().includes("programdata") ||
     Boolean(env.MJH_FORCE_PROGRAMDATA) ||
     isPackagedRuntime();
 
-  const dataRoot = useProgramData
-    ? PROGRAM_DATA_ROOT
+  const dataDir = useProgramData
+    ? join(programDataRoot, "data")
     : env.MJH_DATA_DIR
       ? env.MJH_DATA_DIR
       : join(getProjectRoot(), "data");
-
-  // In development (non-packaged, config from project), keep data under project/data
-  // unless MJH_FORCE_PROGRAMDATA is set.
-  const dataDir = useProgramData
-    ? join(PROGRAM_DATA_ROOT, "data")
-    : join(getProjectRoot(), "data");
   const logsDir = useProgramData
-    ? join(PROGRAM_DATA_ROOT, "logs")
+    ? join(programDataRoot, "logs")
     : join(getProjectRoot(), "logs");
 
-  void dataRoot;
   void homedir;
 
   return {
@@ -119,12 +128,12 @@ export function resolveRuntimePaths(env: NodeJS.ProcessEnv = process.env): Runti
     lockPath: join(dataDir, "agent.lock"),
     statusPath: join(dataDir, "status.json"),
     installDir: isPackagedRuntime() ? getExecutableDir() : PROGRAM_FILES_ROOT,
-    programDataRoot: PROGRAM_DATA_ROOT,
+    programDataRoot,
   };
 }
 
 export function getProgramDataRoot(): string {
-  return PROGRAM_DATA_ROOT;
+  return resolveProgramDataRoot();
 }
 
 export function getProgramFilesRoot(): string {

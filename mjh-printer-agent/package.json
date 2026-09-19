@@ -1,16 +1,20 @@
 {
   "name": "mjh-printer-agent",
-  "version": "2.0.0",
-  "description": "MJH Printer Agent — outbound cloud print worker for Man Jiang Hong kitchen receipts",
+  "version": "2.1.5",
+  "description": "MJH Printer Agent — Windows production EXE for Man Jiang Hong kitchen printing",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx src/index.ts printer:test",
+    "dev": "tsx src/index.ts agent:start",
     "printer:test": "tsx src/index.ts printer:test",
     "agent:start": "tsx src/index.ts agent:start",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "test": "tsx --test src/config.test.ts src/jobs/agent-lock.test.ts src/jobs/state-store.test.ts src/jobs/worker.test.ts src/printer/money.test.ts src/printer/receipt.test.ts"
+    "build:exe": "node scripts/build-exe.mjs",
+    "test": "tsx --test src/config.test.ts src/config-write.test.ts src/paths.test.ts src/cli/commands.test.ts src/cli/resolve-command.test.ts src/cli/pkg-compat.test.ts src/jobs/agent-lock.test.ts src/jobs/state-store.test.ts src/jobs/worker.test.ts src/printer/money.test.ts src/printer/receipt.test.ts src/status.test.ts src/process/agent-process.test.ts"
+  },
+  "bin": {
+    "mjh-printer-agent": "dist/bundle.cjs"
   },
   "engines": {
     "node": ">=18"
@@ -21,7 +25,15 @@
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
+    "@yao-pkg/pkg": "^6.3.2",
+    "esbuild": "^0.25.0",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2"
+  },
+  "pkg": {
+    "targets": [
+      "node18-win-x64"
+    ],
+    "outputPath": "dist/windows"
   }
 }

@@ -90,12 +90,14 @@ test("token never appears in startup log lines", async () => {
     const app = loadConfig(path);
     const startupLines = [
       `[MJH] Printer Agent starting`,
+      `[MJH] Config loaded`,
       `[MJH] PID: ${process.pid}`,
       `[MJH] Version: ${app.version}`,
       `[MJH] Store: ${app.store.id}`,
       `[MJH] Agent: ${app.agent.id}`,
-      `[MJH] Printer: ${app.printer.model} @ ${app.printer.ip}:${app.printer.port}`,
       `[MJH] Cloud: ${app.cloud.baseUrl}`,
+      `[MJH] Token source: config`,
+      `[MJH] Printer: ${app.printer.model} @ ${app.printer.ip}:${app.printer.port}`,
       `[MJH] Waiting for print jobs...`,
     ].join("\n");
 
@@ -103,5 +105,30 @@ test("token never appears in startup log lines", async () => {
     assert.equal(startupLines.includes(app.cloud.token), false);
   } finally {
     await rm(join(path, ".."), { recursive: true, force: true });
+  }
+});
+
+test("BOM-prefixed config still loads", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "mjh-cfg-bom-"));
+  const path = join(dir, "printer.json");
+  const body = JSON.stringify({
+    store: { id: "store-1" },
+    agent: { id: "kitchen-1", token: "bom-token", pollIntervalMs: 3000 },
+    printer: {
+      name: "Kitchen",
+      model: "XP-N160II",
+      ip: "127.0.0.1",
+      port: 9100,
+      encoding: "gb18030",
+      connectTimeoutMs: 1000,
+    },
+    cloud: { baseUrl: "http://127.0.0.1:3001/v1" },
+  });
+  await writeFile(path, `\uFEFF${body}`, "utf8");
+  try {
+    const file = loadFileConfig(path);
+    assert.equal(file.agent.token, "bom-token");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });

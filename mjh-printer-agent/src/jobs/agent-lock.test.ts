@@ -75,3 +75,22 @@ test("shutdown releases lock", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("corrupt lock with pid 0 is recoverable (not AlreadyRunning 0)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "mjh-lock-"));
+  const lockPath = join(dir, "agent.lock");
+  try {
+    await writeFile(
+      lockPath,
+      JSON.stringify({ pid: 0, startedAt: "2020-01-01T00:00:00.000Z", version: "1.0.0" }),
+      "utf8",
+    );
+    const lock = new AgentLock(lockPath, "2.1.4");
+    const info = await lock.acquire();
+    assert.equal(info.pid, process.pid);
+    assert.notEqual(info.pid, 0);
+    await lock.release();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

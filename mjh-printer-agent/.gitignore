@@ -11,3 +11,7 @@ data/print-state.json
 data/agent.lock
 data/*.tmp
 data/*.lock
+logs/
+release/
+dist/bundle.cjs
+dist/windows/

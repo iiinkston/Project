@@ -3,21 +3,56 @@ import { dirname } from "node:path";
 import { z } from "zod";
 
 const completedEntrySchema = z.object({
-  printedAt: z.string().min(1),
+  kitchenSentAt: z.string().optional(),
+  cashierSentAt: z.string().optional(),
+  printedAt: z.string().min(1).optional(),
   acknowledged: z.boolean(),
-});
+}).passthrough();
 
 const stateSchema = z.object({
   completed: z.record(z.string(), completedEntrySchema),
 });
 
-export type CompletedEntry = z.infer<typeof completedEntrySchema>;
-export type PrintState = z.infer<typeof stateSchema>;
+export type CompletedEntry = {
+  kitchenSentAt?: string;
+  cashierSentAt?: string;
+  printedAt?: string;
+  acknowledged: boolean;
+};
 
-const EMPTY_STATE: PrintState = { completed: {} };
+export type PrintState = {
+  completed: Record<string, CompletedEntry>;
+};
+
+function normalizeEntry(raw: z.infer<typeof completedEntrySchema>): CompletedEntry {
+  const kitchenSentAt = raw.kitchenSentAt;
+  const cashierSentAt = raw.cashierSentAt;
+  let printedAt = raw.printedAt;
+
+  // Backward compatibility: old entries only had printedAt + acknowledged.
+  if (!printedAt && kitchenSentAt && cashierSentAt) {
+    printedAt = cashierSentAt;
+  }
+  if (printedAt && !kitchenSentAt && !cashierSentAt) {
+    // Treat legacy "printed" as both copies already sent.
+    return {
+      kitchenSentAt: printedAt,
+      cashierSentAt: printedAt,
+      printedAt,
+      acknowledged: raw.acknowledged,
+    };
+  }
+
+  return {
+    kitchenSentAt,
+    cashierSentAt,
+    printedAt,
+    acknowledged: raw.acknowledged,
+  };
+}
 
 export class StateStore {
-  private state: PrintState = EMPTY_STATE;
+  private state: PrintState = { completed: {} };
   private loaded = false;
 
   constructor(private readonly filePath: string) {}
@@ -30,7 +65,12 @@ export class StateStore {
       if (!parsed.success) {
         throw new Error(`Invalid print-state.json: ${parsed.error.message}`);
       }
-      this.state = parsed.data;
+
+      const completed: Record<string, CompletedEntry> = {};
+      for (const [jobId, entry] of Object.entries(parsed.data.completed)) {
+        completed[jobId] = normalizeEntry(entry);
+      }
+      this.state = { completed };
     } catch (error) {
       const code =
         typeof error === "object" && error !== null && "code" in error
@@ -53,17 +93,61 @@ export class StateStore {
   }
 
   isPrinted(jobId: string): boolean {
-    return this.getCompleted(jobId) !== undefined;
+    const entry = this.getCompleted(jobId);
+    if (!entry) {
+      return false;
+    }
+    if (entry.printedAt) {
+      return true;
+    }
+    return Boolean(entry.kitchenSentAt && entry.cashierSentAt);
   }
 
   needsAck(jobId: string): boolean {
     const entry = this.getCompleted(jobId);
-    return entry !== undefined && entry.acknowledged === false;
+    return entry !== undefined && this.isPrinted(jobId) && entry.acknowledged === false;
+  }
+
+  needsKitchen(jobId: string): boolean {
+    const entry = this.getCompleted(jobId);
+    return !entry?.kitchenSentAt;
+  }
+
+  needsCashier(jobId: string): boolean {
+    const entry = this.getCompleted(jobId);
+    return !entry?.cashierSentAt;
+  }
+
+  async markKitchenSent(jobId: string, at: string = new Date().toISOString()): Promise<void> {
+    this.ensureLoaded();
+    const prev = this.state.completed[jobId];
+    this.state.completed[jobId] = {
+      kitchenSentAt: at,
+      cashierSentAt: prev?.cashierSentAt,
+      printedAt: prev?.printedAt,
+      acknowledged: prev?.acknowledged ?? false,
+    };
+    await this.persist();
+  }
+
+  async markCashierSent(jobId: string, at: string = new Date().toISOString()): Promise<void> {
+    this.ensureLoaded();
+    const prev = this.state.completed[jobId];
+    this.state.completed[jobId] = {
+      kitchenSentAt: prev?.kitchenSentAt,
+      cashierSentAt: at,
+      printedAt: prev?.printedAt,
+      acknowledged: prev?.acknowledged ?? false,
+    };
+    await this.persist();
   }
 
   async markPrinted(jobId: string, printedAt: string = new Date().toISOString()): Promise<void> {
     this.ensureLoaded();
+    const prev = this.state.completed[jobId];
     this.state.completed[jobId] = {
+      kitchenSentAt: prev?.kitchenSentAt ?? printedAt,
+      cashierSentAt: prev?.cashierSentAt ?? printedAt,
       printedAt,
       acknowledged: false,
     };
@@ -101,7 +185,6 @@ export class StateStore {
     try {
       await rename(tempPath, this.filePath);
     } catch (error) {
-      // Windows cannot rename over an existing file — replace explicitly.
       const code =
         typeof error === "object" && error !== null && "code" in error
           ? String((error as NodeJS.ErrnoException).code)

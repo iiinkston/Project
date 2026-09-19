@@ -1,7 +1,16 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { z } from "zod";
+import { getProjectRoot, resolveConfigPath as resolveConfigPathFromPaths, resolveRuntimePaths } from "./paths.js";
+import { AGENT_VERSION } from "./version.js";
+
+export type TokenSource = "config" | "env";
+
+export type ResolvedToken = {
+  token: string;
+  source: TokenSource;
+};
 
 const fileConfigSchema = z.object({
   store: z.object({
@@ -33,39 +42,45 @@ export type AppConfig = FileConfig & {
     requestTimeoutMs: number;
   };
   version: string;
+  configPath: string;
+  dataDir: string;
+  logsDir: string;
 };
 
 export const TOKEN_ENV = "MJH_PRINTER_AGENT_TOKEN";
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
-function resolveProjectRoot(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  return join(here, "..");
-}
-
 export function resolveConfigPath(): string {
-  return join(resolveProjectRoot(), "config", "printer.json");
+  return resolveConfigPathFromPaths();
 }
 
 export function resolveDataDir(): string {
-  return join(resolveProjectRoot(), "data");
+  return resolveRuntimePaths().dataDir;
 }
 
 export function resolveStatePath(): string {
-  return join(resolveDataDir(), "print-state.json");
+  return resolveRuntimePaths().statePath;
 }
 
 export function resolveLockPath(): string {
-  return join(resolveDataDir(), "agent.lock");
+  return resolveRuntimePaths().lockPath;
+}
+
+export function resolveStatusPath(): string {
+  return resolveRuntimePaths().statusPath;
+}
+
+export function resolveLogsDir(): string {
+  return resolveRuntimePaths().logsDir;
 }
 
 export function readPackageVersion(): string {
   try {
-    const raw = readFileSync(join(resolveProjectRoot(), "package.json"), "utf8");
+    const raw = readFileSync(join(getProjectRoot(), "package.json"), "utf8");
     const pkg = JSON.parse(raw) as { version?: string };
-    return pkg.version ?? "0.0.0";
+    return pkg.version ?? AGENT_VERSION;
   } catch {
-    return "0.0.0";
+    return AGENT_VERSION;
   }
 }
 
@@ -76,6 +91,11 @@ function readFileConfig(configPath: string): FileConfig {
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to read printer config at ${configPath}: ${detail}`);
+  }
+
+  // PowerShell Set-Content -Encoding UTF8 writes BOM; strip so JSON/token stay valid.
+  if (raw.charCodeAt(0) === 0xfeff) {
+    raw = raw.slice(1);
   }
 
   let json: unknown;
@@ -97,27 +117,22 @@ function readFileConfig(configPath: string): FileConfig {
   return parsed.data;
 }
 
-/** Load file config only (token optional). Safe for printer:test. */
 export function loadFileConfig(configPath: string = resolveConfigPath()): FileConfig {
   return readFileConfig(configPath);
 }
 
-/**
- * Resolve printer-agent token.
- * Precedence: config.agent.token → MJH_PRINTER_AGENT_TOKEN → fail.
- */
-export function resolveAgentToken(
+export function resolveAgentTokenDetails(
   file: FileConfig,
   env: NodeJS.ProcessEnv = process.env,
-): string {
+): ResolvedToken {
   const fromConfig = file.agent.token?.trim();
   if (fromConfig) {
-    return fromConfig;
+    return { token: fromConfig, source: "config" };
   }
 
   const fromEnv = env[TOKEN_ENV]?.trim();
   if (fromEnv) {
-    return fromEnv;
+    return { token: fromEnv, source: "env" };
   }
 
   throw new Error(
@@ -125,18 +140,57 @@ export function resolveAgentToken(
   );
 }
 
-/** Load full agent config with resolved token (never logged by callers). */
+export function resolveAgentToken(
+  file: FileConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return resolveAgentTokenDetails(file, env).token;
+}
+
+/** Token source for an already-loaded AppConfig (config wins over env). */
+export function resolveAgentTokenSource(
+  config: AppConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): TokenSource {
+  const fromConfig = config.agent.token?.trim();
+  if (fromConfig) {
+    return "config";
+  }
+  if (env[TOKEN_ENV]?.trim()) {
+    return "env";
+  }
+  return "config";
+}
+
+export function hashTokenSha256(token: string): string {
+  return createHash("sha256").update(token, "utf8").digest("hex");
+}
+
 export function loadConfig(configPath: string = resolveConfigPath()): AppConfig {
-  const file = readFileConfig(configPath);
-  const token = resolveAgentToken(file);
+  const paths = resolveRuntimePaths();
+  const resolvedPath = configPath || paths.configPath;
+  const file = readFileConfig(resolvedPath);
+  const { token } = resolveAgentTokenDetails(file);
 
   return {
     ...file,
     version: readPackageVersion(),
+    configPath: resolvedPath,
+    dataDir: paths.dataDir,
+    logsDir: paths.logsDir,
     cloud: {
       ...file.cloud,
       token,
       requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
     },
   };
+}
+
+export function hasTokenConfigured(file: FileConfig, env: NodeJS.ProcessEnv = process.env): boolean {
+  try {
+    resolveAgentTokenDetails(file, env);
+    return true;
+  } catch {
+    return false;
+  }
 }

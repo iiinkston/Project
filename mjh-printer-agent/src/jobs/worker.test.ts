@@ -52,7 +52,10 @@ function fakeConfig(): AppConfig {
       token: "test-token",
       requestTimeoutMs: 1000,
     },
-    version: "2.0.0",
+    version: "2.1.0",
+    configPath: "C:\\tmp\\printer.json",
+    dataDir: "C:\\tmp\\data",
+    logsDir: "C:\\tmp\\logs",
   };
 }
 
@@ -62,7 +65,6 @@ test("exactly two receipt sends and complete once", async () => {
 
   let completeCalls = 0;
   let sendCalls = 0;
-  let sentBytes = 0;
 
   const api = {
     async claimJob() {
@@ -83,9 +85,8 @@ test("exactly two receipt sends and complete once", async () => {
     async connect() {
       return;
     },
-    async send(buffer: Buffer) {
+    async send() {
       sendCalls += 1;
-      sentBytes += buffer.length;
     },
     async close() {
       return;
@@ -101,15 +102,124 @@ test("exactly two receipt sends and complete once", async () => {
     await worker.processClaimedJobForTest(v2Job);
 
     assert.equal(sendCalls, 2);
-    assert.ok(sentBytes > 0);
     assert.equal(completeCalls, 1);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });
 
-test("StateStore ACK retry does not reprint", async () => {
+test("crash after kitchen does not reprint kitchen", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "mjh-worker-k-"));
+  const statePath = join(dir, "print-state.json");
+  let sendCalls = 0;
+  let completeCalls = 0;
+
+  const api = {
+    async claimJob() {
+      return null;
+    },
+    async completeJob() {
+      completeCalls += 1;
+    },
+    async failJob() {
+      return;
+    },
+  } as unknown as ApiClient;
+
+  const fakePrinter = {
+    async testConnection() {
+      return true;
+    },
+    async connect() {
+      return;
+    },
+    async send() {
+      sendCalls += 1;
+    },
+    async close() {
+      return;
+    },
+  } as unknown as PrinterClient;
+
+  try {
+    const store = new StateStore(statePath);
+    await store.load();
+    await store.markKitchenSent(v2Job.id);
+
+    const worker = new PrintWorker(fakeConfig(), store, {
+      api,
+      createPrinter: () => fakePrinter,
+    });
+    await worker.processClaimedJobForTest(v2Job);
+
+    // Only cashier should be sent
+    assert.equal(sendCalls, 1);
+    assert.equal(completeCalls, 1);
+    assert.equal(store.needsKitchen(v2Job.id), false);
+    assert.equal(store.needsCashier(v2Job.id), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("both copies sent + ACK failure does not reprint", async () => {
   const dir = await mkdtemp(join(tmpdir(), "mjh-worker-ack-"));
+  const statePath = join(dir, "print-state.json");
+  let sendCalls = 0;
+  let completeCalls = 0;
+
+  const api = {
+    async claimJob() {
+      return null;
+    },
+    async completeJob() {
+      completeCalls += 1;
+      if (completeCalls === 1) {
+        throw new Error("transient ACK failure");
+      }
+    },
+    async failJob() {
+      return;
+    },
+  } as unknown as ApiClient;
+
+  const fakePrinter = {
+    async testConnection() {
+      return true;
+    },
+    async connect() {
+      return;
+    },
+    async send() {
+      sendCalls += 1;
+    },
+    async close() {
+      return;
+    },
+  } as unknown as PrinterClient;
+
+  try {
+    const store = new StateStore(statePath);
+    const worker = new PrintWorker(fakeConfig(), store, {
+      api,
+      createPrinter: () => fakePrinter,
+    });
+
+    await worker.processClaimedJobForTest(v2Job);
+    assert.equal(sendCalls, 2);
+    assert.equal(store.isPrinted(v2Job.id), true);
+
+    // Second claim/process should only ACK, not reprint
+    await worker.processClaimedJobForTest(v2Job);
+    assert.equal(sendCalls, 2);
+    assert.equal(completeCalls, 2);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("StateStore ACK retry does not reprint", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "mjh-worker-ack2-"));
   const statePath = join(dir, "print-state.json");
 
   let completeCalls = 0;

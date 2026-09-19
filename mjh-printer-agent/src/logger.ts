@@ -1,4 +1,5 @@
 import { createWriteStream, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { execFile } from "node:child_process";
 import { join } from "node:path";
 import type { WriteStream } from "node:fs";
 
@@ -15,6 +16,7 @@ let currentLogDate = "";
 let logsDirectory: string | null = null;
 let retentionDays = 14;
 let alsoConsole = true;
+let fileLoggingDisabled = false;
 
 function todayStamp(d = new Date()): string {
   const yyyy = d.getFullYear().toString().padStart(4, "0");
@@ -23,8 +25,30 @@ function todayStamp(d = new Date()): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function closeStream(): void {
+  if (fileStream) {
+    try {
+      fileStream.end();
+    } catch {
+      // ignore
+    }
+    fileStream = null;
+  }
+}
+
+/** Ensure Users can read log files created by SYSTEM (store deployment ops). */
+function ensureLogFileAcl(filePath: string): void {
+  if (process.platform !== "win32") return;
+  execFile(
+    "icacls",
+    [filePath, "/grant:r", "*S-1-5-32-545:(R)", "/C"],
+    { windowsHide: true },
+    () => undefined,
+  );
+}
+
 function ensureStream(): void {
-  if (!logsDirectory) {
+  if (!logsDirectory || fileLoggingDisabled) {
     return;
   }
 
@@ -33,15 +57,26 @@ function ensureStream(): void {
     return;
   }
 
-  if (fileStream) {
-    fileStream.end();
+  closeStream();
+
+  try {
+    mkdirSync(logsDirectory, { recursive: true });
+    const filePath = join(logsDirectory, `agent-${stamp}.log`);
+    const created = !existsSync(filePath);
+    const stream = createWriteStream(filePath, { flags: "a" });
+    stream.on("error", () => {
+      fileLoggingDisabled = true;
+      closeStream();
+    });
+    fileStream = stream;
+    currentLogDate = stamp;
+    if (created) {
+      ensureLogFileAcl(filePath);
+    }
+  } catch {
+    fileLoggingDisabled = true;
     fileStream = null;
   }
-
-  mkdirSync(logsDirectory, { recursive: true });
-  const filePath = join(logsDirectory, `agent-${stamp}.log`);
-  fileStream = createWriteStream(filePath, { flags: "a" });
-  currentLogDate = stamp;
 }
 
 function redact(message: string): string {
@@ -71,7 +106,8 @@ function write(level: LogLevel, message: string, event?: string): void {
     ensureStream();
     fileStream?.write(`${line}\n`);
   } catch {
-    // Ignore file log failures — console remains.
+    fileLoggingDisabled = true;
+    closeStream();
   }
 }
 
@@ -79,11 +115,18 @@ export function configureLogger(options: LoggerOptions): void {
   logsDirectory = options.logsDir ?? null;
   retentionDays = options.retentionDays ?? 14;
   alsoConsole = options.alsoConsole ?? true;
+  fileLoggingDisabled = false;
+  closeStream();
+  currentLogDate = "";
 
   if (logsDirectory) {
-    mkdirSync(logsDirectory, { recursive: true });
-    pruneOldLogs();
-    ensureStream();
+    try {
+      mkdirSync(logsDirectory, { recursive: true });
+      pruneOldLogs();
+      ensureStream();
+    } catch {
+      fileLoggingDisabled = true;
+    }
   }
 }
 

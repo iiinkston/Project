@@ -1,4 +1,5 @@
 import { claimJobResponseSchema, type ClaimJobResponse, type PrintJob } from "./types.js";
+import { z } from "zod";
 
 export type ApiClientOptions = {
   baseUrl: string;
@@ -7,6 +8,16 @@ export type ApiClientOptions = {
   agentId: string;
   requestTimeoutMs: number;
 };
+
+export const cloudHealthSchema = z.object({
+  status: z.string(),
+  database: z.string().optional(),
+  version: z.string().optional(),
+  commit: z.string().optional(),
+  environment: z.string().optional(),
+});
+
+export type CloudHealth = z.infer<typeof cloudHealthSchema>;
 
 export class ApiClient {
   private readonly baseUrl: string;
@@ -21,6 +32,15 @@ export class ApiClient {
     this.storeId = options.storeId;
     this.agentId = options.agentId;
     this.requestTimeoutMs = options.requestTimeoutMs;
+  }
+
+  async health(): Promise<CloudHealth> {
+    const data = await this.requestJson<unknown>("GET", "/health");
+    const parsed = cloudHealthSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new Error(`Invalid cloud health response: ${parsed.error.message}`);
+    }
+    return parsed.data;
   }
 
   async claimJob(): Promise<PrintJob | null> {
@@ -85,13 +105,19 @@ export class ApiClient {
       }
 
       if (!response.ok) {
-        const detail =
-          typeof parsed === "object" &&
-          parsed !== null &&
-          "message" in parsed &&
-          typeof (parsed as { message: unknown }).message === "string"
-            ? (parsed as { message: string }).message
-            : text.slice(0, 200) || response.statusText;
+        let detail = text.slice(0, 200) || response.statusText;
+        if (typeof parsed === "object" && parsed !== null) {
+          const obj = parsed as Record<string, unknown>;
+          if (typeof obj.message === "string") {
+            detail = obj.message;
+          } else if (
+            typeof obj.error === "object" &&
+            obj.error !== null &&
+            typeof (obj.error as { message?: unknown }).message === "string"
+          ) {
+            detail = (obj.error as { message: string }).message;
+          }
+        }
         throw new Error(`Cloud API error HTTP ${response.status} on ${method} ${path}: ${detail}`);
       }
 
@@ -126,10 +152,10 @@ export class ApiClient {
         return new Error(`Cloud API network unreachable (${method} ${path})\n${error.message}`);
       }
 
-      // Already a friendly ApiClient error
       if (
         error.message.startsWith("Cloud ") ||
-        error.message.startsWith("Invalid claim")
+        error.message.startsWith("Invalid claim") ||
+        error.message.startsWith("Invalid cloud health")
       ) {
         return error;
       }
