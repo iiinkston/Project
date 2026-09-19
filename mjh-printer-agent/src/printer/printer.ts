@@ -77,6 +77,10 @@ export class PrinterClient {
     }
   }
 
+  /**
+   * Send bytes and resolve only after Node reports the chunk flushed
+   * to the OS (write callback), waiting for drain when backpressured.
+   */
   async send(buffer: Buffer): Promise<void> {
     const socket = this.socket;
     if (!socket || socket.destroyed) {
@@ -84,12 +88,41 @@ export class PrinterClient {
     }
 
     await new Promise<void>((resolve, reject) => {
-      socket.write(buffer, (error) => {
+      let settled = false;
+
+      const finish = (error?: Error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        socket.off("error", onError);
         if (error) {
           reject(this.toFriendlyError(error));
           return;
         }
         resolve();
+      };
+
+      const onError = (error: Error) => {
+        finish(error);
+      };
+
+      socket.once("error", onError);
+
+      const accepted = socket.write(buffer, (error) => {
+        if (error) {
+          finish(error);
+          return;
+        }
+
+        // Callback = this write has been flushed to the kernel.
+        // If write() returned false, also wait for drain.
+        if (accepted) {
+          finish();
+          return;
+        }
+
+        socket.once("drain", () => finish());
       });
     });
   }

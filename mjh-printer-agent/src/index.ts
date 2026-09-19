@@ -1,5 +1,11 @@
-import { loadConfig, loadFileConfig, resolveStatePath } from "./config.js";
+import {
+  loadConfig,
+  loadFileConfig,
+  resolveLockPath,
+  resolveStatePath,
+} from "./config.js";
 import { logger } from "./logger.js";
+import { AgentAlreadyRunningError, AgentLock } from "./jobs/agent-lock.js";
 import { PrintWorker } from "./jobs/worker.js";
 import { StateStore } from "./jobs/state-store.js";
 import { PrinterClient } from "./printer/printer.js";
@@ -43,18 +49,58 @@ async function runPrinterTest(): Promise<void> {
 
 async function runAgent(): Promise<void> {
   const config = loadConfig();
+  const lock = new AgentLock(resolveLockPath(), config.version);
+
+  try {
+    await lock.acquire();
+  } catch (error) {
+    if (error instanceof AgentAlreadyRunningError) {
+      logger.error("[MJH] Printer Agent already running");
+      logger.error(`[MJH] Existing PID: ${error.existingPid}`);
+      logger.error("[MJH] Exiting");
+      process.exitCode = 1;
+      return;
+    }
+    throw error;
+  }
+
+  const release = async () => {
+    await lock.release();
+  };
+
+  process.once("exit", () => {
+    // Sync best-effort is not available async; release is registered below for signals.
+  });
+
   const state = new StateStore(resolveStatePath());
   const worker = new PrintWorker(config, state);
 
-  const shutdown = () => {
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
     logger.info("[MJH] Shutting down...");
     worker.stop();
+    await release();
   };
 
-  process.once("SIGINT", shutdown);
-  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", () => {
+    void shutdown();
+  });
+  process.once("SIGTERM", () => {
+    void shutdown();
+  });
+  process.once("beforeExit", () => {
+    void release();
+  });
 
-  await worker.start();
+  try {
+    await worker.start();
+  } finally {
+    await release();
+  }
 }
 
 async function main(): Promise<void> {

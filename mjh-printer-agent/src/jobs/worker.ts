@@ -3,11 +3,7 @@ import { ApiClient } from "../cloud/api-client.js";
 import type { PrintJob } from "../cloud/types.js";
 import { logger } from "../logger.js";
 import { PrinterClient } from "../printer/printer.js";
-import {
-  buildCashierReceiptV2,
-  buildKitchenReceiptV2,
-  logPayloadDetection,
-} from "../printer/receipt.js";
+import { buildCashierReceiptV2, buildKitchenReceiptV2, isV2Payload } from "../printer/receipt.js";
 import { StateStore } from "./state-store.js";
 
 function sleep(ms: number): Promise<void> {
@@ -18,6 +14,11 @@ function sleep(ms: number): Promise<void> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Brief pause so XP-N160II can finish cut before the next init/print. */
+async function smallPrinterSafeDelay(): Promise<void> {
+  await sleep(400);
 }
 
 export type PrintWorkerDeps = {
@@ -57,6 +58,8 @@ export class PrintWorker {
     await this.state.load();
 
     logger.info("[MJH] Printer Agent starting");
+    logger.info(`[MJH] PID: ${process.pid}`);
+    logger.info(`[MJH] Version: ${this.config.version}`);
     logger.info(`[MJH] Store: ${this.config.store.id}`);
     logger.info(`[MJH] Agent: ${this.config.agent.id}`);
     logger.info(
@@ -109,7 +112,7 @@ export class PrintWorker {
 
   private async handleJob(job: PrintJob): Promise<void> {
     const tag = `[Job ${job.id}]`;
-    logger.info(`${tag} Claimed`);
+    logger.info(`${tag} Claimed order=${job.payload.orderNumber}`);
 
     if (this.state.isPrinted(job.id)) {
       logger.info(`${tag} Already printed locally — retrying cloud ACK only`);
@@ -130,32 +133,27 @@ export class PrintWorker {
       return;
     }
 
-    logger.info(`${tag} Printing order ${job.payload.orderNumber} (kitchen + cashier)`);
-
-    const v2 = logPayloadDetection(job.payload);
-    logger.info(`${tag} Payload version: ${v2 ? "V2" : "V1-legacy"}`);
+    const version = isV2Payload(job.payload) ? "V2" : "V1";
+    logger.info(`${tag} Payload version=${version}`);
 
     try {
       await printer.connect();
 
-      // IMPORTANT: send copies separately. A full cut mid-buffer often drops the
-      // remainder of the same TCP write on XP-N160II (only one physical slip).
       logger.info(`${tag} Rendering kitchen copy`);
       const kitchen = buildKitchenReceiptV2(job);
-      logger.info(`${tag} Kitchen bytes: ${kitchen.length}`);
+      logger.info(`${tag} Kitchen bytes=${kitchen.length}`);
+      logger.info(`${tag} Sending kitchen copy`);
+      await printer.send(kitchen);
+      logger.info(`${tag} Kitchen copy sent`);
+
+      await smallPrinterSafeDelay();
 
       logger.info(`${tag} Rendering cashier copy`);
       const cashier = buildCashierReceiptV2(job);
-      logger.info(`${tag} Cashier bytes: ${cashier.length}`);
-
-      logger.info(`${tag} Sending kitchen`);
-      await printer.send(kitchen);
-
-      // Let cutter finish before the next initialize/print sequence.
-      await sleep(400);
-
-      logger.info(`${tag} Sending cashier`);
+      logger.info(`${tag} Cashier bytes=${cashier.length}`);
+      logger.info(`${tag} Sending cashier copy`);
       await printer.send(cashier);
+      logger.info(`${tag} Cashier copy sent`);
     } catch (error) {
       const message = errorMessage(error);
       logger.error(`${tag} Print failed: ${message}`);
@@ -166,9 +164,8 @@ export class PrintWorker {
       await printer.close();
     }
 
-    // Persist BEFORE cloud complete — prevents duplicate physical prints on restart.
     await this.state.markPrinted(job.id);
-    logger.info(`${tag} Printed`);
+    logger.info(`${tag} Printed both copies`);
 
     await this.acknowledge(job.id, tag);
   }

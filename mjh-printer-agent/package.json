@@ -1,6 +1,6 @@
 {
   "name": "mjh-printer-agent",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "MJH Printer Agent — outbound cloud print worker for Man Jiang Hong kitchen receipts",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "agent:start": "tsx src/index.ts agent:start",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "test": "tsx --test src/jobs/state-store.test.ts src/jobs/worker.test.ts src/printer/money.test.ts src/printer/receipt.test.ts"
+    "test": "tsx --test src/config.test.ts src/jobs/agent-lock.test.ts src/jobs/state-store.test.ts src/jobs/worker.test.ts src/printer/money.test.ts src/printer/receipt.test.ts"
   },
   "engines": {
     "node": ">=18"

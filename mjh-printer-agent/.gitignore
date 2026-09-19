@@ -8,4 +8,6 @@ Thumbs.db
 .env.*
 !.env.example
 data/print-state.json
+data/agent.lock
 data/*.tmp
+data/*.lock

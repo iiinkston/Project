@@ -52,10 +52,11 @@ function fakeConfig(): AppConfig {
       token: "test-token",
       requestTimeoutMs: 1000,
     },
+    version: "2.0.0",
   };
 }
 
-test("complete is called only once after dual local print", async () => {
+test("exactly two receipt sends and complete once", async () => {
   const dir = await mkdtemp(join(tmpdir(), "mjh-worker-"));
   const statePath = join(dir, "print-state.json");
 
@@ -101,6 +102,59 @@ test("complete is called only once after dual local print", async () => {
 
     assert.equal(sendCalls, 2);
     assert.ok(sentBytes > 0);
+    assert.equal(completeCalls, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("StateStore ACK retry does not reprint", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "mjh-worker-ack-"));
+  const statePath = join(dir, "print-state.json");
+
+  let completeCalls = 0;
+  let sendCalls = 0;
+
+  const api = {
+    async claimJob() {
+      return null;
+    },
+    async completeJob() {
+      completeCalls += 1;
+    },
+    async failJob() {
+      throw new Error("failJob should not be called");
+    },
+  } as unknown as ApiClient;
+
+  const fakePrinter = {
+    async testConnection() {
+      return true;
+    },
+    async connect() {
+      return;
+    },
+    async send() {
+      sendCalls += 1;
+    },
+    async close() {
+      return;
+    },
+  } as unknown as PrinterClient;
+
+  try {
+    const store = new StateStore(statePath);
+    await store.load();
+    await store.markPrinted(v2Job.id);
+
+    const worker = new PrintWorker(fakeConfig(), store, {
+      api,
+      createPrinter: () => fakePrinter,
+    });
+
+    await worker.processClaimedJobForTest(v2Job);
+
+    assert.equal(sendCalls, 0);
     assert.equal(completeCalls, 1);
   } finally {
     await rm(dir, { recursive: true, force: true });

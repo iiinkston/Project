@@ -9,6 +9,7 @@ const fileConfigSchema = z.object({
   }),
   agent: z.object({
     id: z.string().min(1),
+    token: z.string().min(1).optional(),
     pollIntervalMs: z.number().int().positive(),
   }),
   printer: z.object({
@@ -31,9 +32,10 @@ export type AppConfig = FileConfig & {
     token: string;
     requestTimeoutMs: number;
   };
+  version: string;
 };
 
-const TOKEN_ENV = "MJH_PRINTER_AGENT_TOKEN";
+export const TOKEN_ENV = "MJH_PRINTER_AGENT_TOKEN";
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
 function resolveProjectRoot(): string {
@@ -51,6 +53,20 @@ export function resolveDataDir(): string {
 
 export function resolveStatePath(): string {
   return join(resolveDataDir(), "print-state.json");
+}
+
+export function resolveLockPath(): string {
+  return join(resolveDataDir(), "agent.lock");
+}
+
+export function readPackageVersion(): string {
+  try {
+    const raw = readFileSync(join(resolveProjectRoot(), "package.json"), "utf8");
+    const pkg = JSON.parse(raw) as { version?: string };
+    return pkg.version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
 }
 
 function readFileConfig(configPath: string): FileConfig {
@@ -81,24 +97,42 @@ function readFileConfig(configPath: string): FileConfig {
   return parsed.data;
 }
 
-/** Load file config only (no API token). Safe for printer:test. */
+/** Load file config only (token optional). Safe for printer:test. */
 export function loadFileConfig(configPath: string = resolveConfigPath()): FileConfig {
   return readFileConfig(configPath);
 }
 
-/** Load full agent config including MJH_PRINTER_AGENT_TOKEN. */
+/**
+ * Resolve printer-agent token.
+ * Precedence: config.agent.token → MJH_PRINTER_AGENT_TOKEN → fail.
+ */
+export function resolveAgentToken(
+  file: FileConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const fromConfig = file.agent.token?.trim();
+  if (fromConfig) {
+    return fromConfig;
+  }
+
+  const fromEnv = env[TOKEN_ENV]?.trim();
+  if (fromEnv) {
+    return fromEnv;
+  }
+
+  throw new Error(
+    `Missing printer-agent token. Set agent.token in printer.json or ${TOKEN_ENV}.`,
+  );
+}
+
+/** Load full agent config with resolved token (never logged by callers). */
 export function loadConfig(configPath: string = resolveConfigPath()): AppConfig {
   const file = readFileConfig(configPath);
-  const token = process.env[TOKEN_ENV]?.trim();
-
-  if (!token) {
-    throw new Error(
-      `Missing ${TOKEN_ENV}. Set it in the environment; do not put the API token in printer.json.`,
-    );
-  }
+  const token = resolveAgentToken(file);
 
   return {
     ...file,
+    version: readPackageVersion(),
     cloud: {
       ...file.cloud,
       token,

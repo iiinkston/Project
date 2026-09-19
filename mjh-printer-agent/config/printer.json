@@ -4,6 +4,7 @@
   },
   "agent": {
     "id": "kitchen-1",
+    "token": "L7KP6AZ3kB7vh1XN5VzPS+/HmciJxxB0GNrDTnrUAL0=",
     "pollIntervalMs": 3000
   },
   "printer": {

@@ -2,11 +2,16 @@ import type { OptionDetail, PrintJob, PrintJobItem, PrintJobPayload } from "../c
 import { minorToMoney, minorToMoneySpaced, minorToPlain } from "./money.js";
 import * as escpos from "./escpos.js";
 
-const SEPARATOR = "--------------------------------";
-/** Font A on 80mm ≈ 32 ASCII columns / 16 CJK cells with our current convention. */
-export const LINE_WIDTH = 32;
+/**
+ * Font A on 80mm / ~72mm printable ≈ 48 ASCII columns.
+ * Chinese characters consume 2 columns.
+ */
+export const LINE_WIDTH = 48;
+const SEPARATOR = "-".repeat(LINE_WIDTH);
 const MODIFIER_INDENT = "  ";
-const FEED_BEFORE_CUT = 2;
+/** Pre-cut feed lines — kitchen needs slightly more margin than cashier. */
+export const FEED_BEFORE_CUT_KITCHEN = 4;
+export const FEED_BEFORE_CUT_CASHIER = 3;
 
 export type ReceiptCopy = "kitchen" | "cashier";
 
@@ -18,7 +23,12 @@ const COPY_SUBTITLE: Record<ReceiptCopy, string> = {
 type ModifierView = {
   name: string;
   chargedAmount: number | null;
+  fromOptionDetails: boolean;
 };
+
+function charWidth(char: string): number {
+  return char.charCodeAt(0) > 0x7f ? 2 : 1;
+}
 
 /** Approximate display width (CJK ≈ 2 cols). */
 export function displayWidth(text: string): number {
@@ -29,11 +39,41 @@ export function displayWidth(text: string): number {
   return width;
 }
 
-function charWidth(char: string): number {
-  return char.charCodeAt(0) > 0x7f ? 2 : 1;
+export function truncateByDisplayWidth(text: string, maxWidth: number): string {
+  if (maxWidth <= 0) {
+    return "";
+  }
+
+  let result = "";
+  let width = 0;
+  for (const char of text) {
+    const w = charWidth(char);
+    if (width + w > maxWidth) {
+      break;
+    }
+    result += char;
+    width += w;
+  }
+  return result;
 }
 
-/** Wrap text by display width without splitting surrogate pairs incorrectly. */
+export function padRightByDisplayWidth(text: string, width: number): string {
+  const current = displayWidth(text);
+  if (current >= width) {
+    return text;
+  }
+  return `${text}${" ".repeat(width - current)}`;
+}
+
+export function padLeftByDisplayWidth(text: string, width: number): string {
+  const current = displayWidth(text);
+  if (current >= width) {
+    return text;
+  }
+  return `${" ".repeat(width - current)}${text}`;
+}
+
+/** Wrap text by display width without splitting code points incorrectly. */
 export function wrapByDisplayWidth(text: string, maxWidth: number): string[] {
   if (maxWidth <= 0) {
     return [text];
@@ -68,7 +108,7 @@ export function wrapByDisplayWidth(text: string, maxWidth: number): string[] {
  */
 export function packSegments(
   segments: string[],
-  options: { maxWidth: number; separator?: string; indent?: string } ,
+  options: { maxWidth: number; separator?: string; indent?: string },
 ): string[] {
   const separator = options.separator ?? " / ";
   const indent = options.indent ?? "";
@@ -111,13 +151,6 @@ export function packSegments(
   return lines;
 }
 
-function padItemLine(name: string, qty: string, totalWidth = LINE_WIDTH): string {
-  const nameWidth = displayWidth(name);
-  const qtyWidth = displayWidth(qty);
-  const spaces = Math.max(1, totalWidth - nameWidth - qtyWidth);
-  return `${name}${" ".repeat(spaces)}${qty}`;
-}
-
 function padLeftRight(left: string, right: string, totalWidth = LINE_WIDTH): string {
   const gap = Math.max(1, totalWidth - displayWidth(left) - displayWidth(right));
   return `${left}${" ".repeat(gap)}${right}`;
@@ -134,30 +167,6 @@ export function isV2Payload(payload: PrintJobPayload): boolean {
   );
 }
 
-/** Temporary diagnostics for production claim payloads. */
-export function logPayloadDetection(payload: PrintJobPayload): boolean {
-  const v2 = isV2Payload(payload);
-  console.log("[Receipt] payload keys:", Object.keys(payload));
-  console.log("[Receipt] detected V2:", v2);
-  console.log(
-    "[Receipt] money fields:",
-    JSON.stringify({
-      subtotal: payload.subtotal,
-      total: payload.total,
-      currency: payload.currency,
-      fulfillmentType: payload.fulfillmentType,
-      itemMoney: payload.items.map((item) => ({
-        name: item.name,
-        unitPrice: item.unitPrice,
-        lineTotal: item.lineTotal,
-        unitPriceType: typeof item.unitPrice,
-        lineTotalType: typeof item.lineTotal,
-      })),
-    }),
-  );
-  return v2;
-}
-
 export function formatReceiptTime(iso: string | undefined, fallbackIso: string): string {
   const raw = iso && iso.length > 0 ? iso : fallbackIso;
   const date = new Date(raw);
@@ -170,7 +179,7 @@ export function formatReceiptTime(iso: string | undefined, fallbackIso: string):
   return `${hh}:${min}`;
 }
 
-/** Derive #0004 from order number suffix when possible. */
+/** Derive #0010 from order number suffix when possible. */
 export function shortOrderTag(orderNumber: string): string {
   const match = orderNumber.match(/(\d+)$/);
   if (!match) {
@@ -196,31 +205,38 @@ function resolveModifiers(item: PrintJobItem): ModifierView[] {
       name: detail.name,
       chargedAmount:
         typeof detail.chargedAmount === "number" ? detail.chargedAmount : null,
+      fromOptionDetails: true,
     }));
   }
 
   if (item.options && item.options.length > 0) {
-    return item.options.map((name) => ({ name, chargedAmount: null }));
+    return item.options.map((name) => ({
+      name,
+      chargedAmount: null,
+      fromOptionDetails: false,
+    }));
   }
 
   return [];
 }
 
-function formatModifierLabel(mod: ModifierView, currency: string, showCharge: boolean): string {
-  if (showCharge && typeof mod.chargedAmount === "number" && mod.chargedAmount > 0) {
+/**
+ * chargedAmount is authoritative.
+ * chargedAmount > 0  => + name +RMx.xx
+ * chargedAmount === 0 => + name  (never use standalonePrice)
+ * options[] strings   => name only (packed)
+ */
+function formatModifierLabel(mod: ModifierView, currency: string): string {
+  if (typeof mod.chargedAmount === "number" && mod.chargedAmount > 0) {
     return `+ ${mod.name} +${minorToMoney(mod.chargedAmount, currency)}`;
   }
-  if (typeof mod.chargedAmount === "number" && mod.chargedAmount > 0) {
+  if (mod.fromOptionDetails) {
     return `+ ${mod.name}`;
   }
   return mod.name;
 }
 
-function modifierLines(
-  item: PrintJobItem,
-  currency: string,
-  showCharge: boolean,
-): string[] {
+function modifierLines(item: PrintJobItem, currency: string): string[] {
   const mods = resolveModifiers(item);
   if (mods.length === 0) {
     return [];
@@ -228,28 +244,59 @@ function modifierLines(
 
   const charged = mods.filter((m) => typeof m.chargedAmount === "number" && m.chargedAmount > 0);
   const free = mods.filter((m) => !(typeof m.chargedAmount === "number" && m.chargedAmount > 0));
-
   const lines: string[] = [];
+  const contentWidth = LINE_WIDTH - displayWidth(MODIFIER_INDENT);
 
   for (const mod of charged) {
-    const label = formatModifierLabel(mod, currency, showCharge);
-    for (const wrapped of wrapByDisplayWidth(label, LINE_WIDTH - displayWidth(MODIFIER_INDENT))) {
+    const label = formatModifierLabel(mod, currency);
+    for (const wrapped of wrapByDisplayWidth(label, contentWidth)) {
       lines.push(`${MODIFIER_INDENT}${wrapped}`);
     }
   }
 
   if (free.length > 0) {
-    const labels = free.map((m) => formatModifierLabel(m, currency, false));
-    lines.push(
-      ...packSegments(labels, {
-        maxWidth: LINE_WIDTH,
-        separator: " / ",
-        indent: MODIFIER_INDENT,
-      }),
-    );
+    // optionDetails with chargedAmount 0 stay as individual "+ name" lines when few;
+    // pack plain options[] and zero-charge details that share the free list.
+    const fromDetails = free.filter((m) => m.fromOptionDetails);
+    const fromOptions = free.filter((m) => !m.fromOptionDetails);
+
+    for (const mod of fromDetails) {
+      const label = formatModifierLabel(mod, currency);
+      for (const wrapped of wrapByDisplayWidth(label, contentWidth)) {
+        lines.push(`${MODIFIER_INDENT}${wrapped}`);
+      }
+    }
+
+    if (fromOptions.length > 0) {
+      const labels = fromOptions.map((m) => formatModifierLabel(m, currency));
+      lines.push(
+        ...packSegments(labels, {
+          maxWidth: LINE_WIDTH,
+          separator: " / ",
+          indent: MODIFIER_INDENT,
+        }),
+      );
+    }
+
+    // Also pack zero-charge optionDetails when there are many (hotpot-style).
+    if (fromDetails.length >= 2 && charged.length === 0 && fromOptions.length === 0) {
+      lines.length = 0;
+      const labels = fromDetails.map((m) => m.name);
+      lines.push(
+        ...packSegments(labels, {
+          maxWidth: LINE_WIDTH,
+          separator: " / ",
+          indent: MODIFIER_INDENT,
+        }),
+      );
+    }
   }
 
   return lines;
+}
+
+function hasNonEmptyNotes(notes: string | undefined): boolean {
+  return typeof notes === "string" && notes.trim().length > 0;
 }
 
 function pushTitle(chunks: Buffer[], subtitle: string): void {
@@ -263,8 +310,9 @@ function pushTitle(chunks: Buffer[], subtitle: string): void {
   chunks.push(escpos.lineGB18030(subtitle));
 }
 
-function pushFooter(chunks: Buffer[]): void {
-  chunks.push(escpos.feed(FEED_BEFORE_CUT));
+function pushFooter(chunks: Buffer[], feedLines: number): void {
+  // body → FEED → CUT (cutter needs blank margin under content)
+  chunks.push(escpos.feed(feedLines));
   chunks.push(escpos.fullCut());
 }
 
@@ -290,20 +338,32 @@ function pushMetaHeader(chunks: Buffer[], job: PrintJob): void {
   chunks.push(escpos.lineGB18030(SEPARATOR));
 }
 
-function formatCashierItemLines(item: PrintJobItem): string[] {
-  const qtyUnit = `${item.quantity}×${minorToPlain(item.unitPrice!)}`;
-  const total = minorToPlain(item.lineTotal!);
-  const right = `${qtyUnit}  ${total}`;
-  const rightWidth = displayWidth(right);
-  const nameBudget = LINE_WIDTH - rightWidth - 1;
+function formatKitchenItemLine(item: PrintJobItem): string[] {
+  const qty = `×${item.quantity}`;
+  if (displayWidth(item.name) + 1 + displayWidth(qty) <= LINE_WIDTH) {
+    return [padLeftRight(item.name, qty, LINE_WIDTH)];
+  }
+  return [
+    ...wrapByDisplayWidth(item.name, LINE_WIDTH),
+    padLeftByDisplayWidth(qty, LINE_WIDTH),
+  ];
+}
 
-  if (nameBudget >= 2 && displayWidth(item.name) <= nameBudget) {
-    return [padLeftRight(item.name, right, LINE_WIDTH)];
+function formatCashierItemLines(item: PrintJobItem): string[] {
+  const qtyUnit = `${item.quantity} × ${minorToPlain(item.unitPrice!)}`;
+  const total = minorToPlain(item.lineTotal!);
+  const compactRight = `${item.quantity}×${minorToPlain(item.unitPrice!)}  ${total}`;
+  const compactRightWidth = displayWidth(compactRight);
+  const nameBudget = LINE_WIDTH - compactRightWidth - 1;
+
+  // Short names: single row
+  if (nameBudget >= 4 && displayWidth(item.name) <= nameBudget) {
+    return [padLeftRight(item.name, compactRight, LINE_WIDTH)];
   }
 
-  const nameLines = wrapByDisplayWidth(item.name, LINE_WIDTH);
-  const priceLine = `${" ".repeat(Math.max(0, LINE_WIDTH - rightWidth))}${right}`;
-  return [...nameLines, priceLine];
+  // Long names: name, then qty×price ..... total
+  const priceRow = padLeftRight(qtyUnit, total, LINE_WIDTH);
+  return [...wrapByDisplayWidth(item.name, LINE_WIDTH), priceRow];
 }
 
 function pushKitchenV2(chunks: Buffer[], job: PrintJob): void {
@@ -312,34 +372,25 @@ function pushKitchenV2(chunks: Buffer[], job: PrintJob): void {
 
   pushMetaHeader(chunks, job);
 
-  for (let index = 0; index < payload.items.length; index += 1) {
-    const item = payload.items[index]!;
-    const nameQty = `${item.name} ×${item.quantity}`;
-    for (const line of wrapByDisplayWidth(nameQty, LINE_WIDTH)) {
+  for (const item of payload.items) {
+    for (const line of formatKitchenItemLine(item)) {
       chunks.push(escpos.lineGB18030(line));
     }
 
-    const mods = modifierLines(item, currency, true);
-    for (const line of mods) {
+    for (const line of modifierLines(item, currency)) {
       chunks.push(escpos.lineGB18030(line));
     }
 
-    if (item.notes) {
-      for (const line of wrapByDisplayWidth(`备注：${item.notes}`, LINE_WIDTH)) {
+    if (hasNonEmptyNotes(item.notes)) {
+      for (const line of wrapByDisplayWidth(`备注：${item.notes!.trim()}`, LINE_WIDTH)) {
         chunks.push(escpos.lineGB18030(line));
       }
     }
-
-    const hasDetail = mods.length > 0 || Boolean(item.notes);
-    const next = payload.items[index + 1];
-    if (hasDetail && next) {
-      chunks.push(escpos.lineGB18030());
-    }
   }
 
-  if (payload.notes) {
+  if (hasNonEmptyNotes(payload.notes)) {
     chunks.push(escpos.lineGB18030(SEPARATOR));
-    for (const line of wrapByDisplayWidth(`备注：${payload.notes}`, LINE_WIDTH)) {
+    for (const line of wrapByDisplayWidth(`备注：${payload.notes!.trim()}`, LINE_WIDTH)) {
       chunks.push(escpos.lineGB18030(line));
     }
   }
@@ -356,12 +407,12 @@ function pushCashierV2(chunks: Buffer[], job: PrintJob): void {
       chunks.push(escpos.lineGB18030(line));
     }
 
-    for (const line of modifierLines(item, currency, true)) {
+    for (const line of modifierLines(item, currency)) {
       chunks.push(escpos.lineGB18030(line));
     }
 
-    if (item.notes) {
-      for (const line of wrapByDisplayWidth(`备注：${item.notes}`, LINE_WIDTH)) {
+    if (hasNonEmptyNotes(item.notes)) {
+      for (const line of wrapByDisplayWidth(`备注：${item.notes!.trim()}`, LINE_WIDTH)) {
         chunks.push(escpos.lineGB18030(line));
       }
     }
@@ -387,8 +438,8 @@ function pushCashierV2(chunks: Buffer[], job: PrintJob): void {
   chunks.push(escpos.boldOff());
   chunks.push(escpos.lineGB18030(SEPARATOR));
 
-  if (payload.notes) {
-    for (const line of wrapByDisplayWidth(`备注：${payload.notes}`, LINE_WIDTH)) {
+  if (hasNonEmptyNotes(payload.notes)) {
+    for (const line of wrapByDisplayWidth(`备注：${payload.notes!.trim()}`, LINE_WIDTH)) {
       chunks.push(escpos.lineGB18030(line));
     }
   }
@@ -406,10 +457,10 @@ function pushV1Body(chunks: Buffer[], job: PrintJob): void {
   chunks.push(escpos.lineGB18030(SEPARATOR));
 
   for (const item of payload.items) {
-    chunks.push(escpos.lineGB18030(padItemLine(item.name, `×${item.quantity}`)));
+    chunks.push(escpos.lineGB18030(padLeftRight(item.name, `×${item.quantity}`, LINE_WIDTH)));
 
-    if (item.notes) {
-      chunks.push(escpos.lineGB18030(`备注：${item.notes}`));
+    if (hasNonEmptyNotes(item.notes)) {
+      chunks.push(escpos.lineGB18030(`备注：${item.notes!.trim()}`));
     }
 
     if (item.options && item.options.length > 0) {
@@ -425,8 +476,8 @@ function pushV1Body(chunks: Buffer[], job: PrintJob): void {
 
   chunks.push(escpos.lineGB18030(SEPARATOR));
 
-  if (payload.notes) {
-    chunks.push(escpos.lineGB18030(`备注：${payload.notes}`));
+  if (hasNonEmptyNotes(payload.notes)) {
+    chunks.push(escpos.lineGB18030(`备注：${payload.notes!.trim()}`));
   }
 }
 
@@ -435,43 +486,34 @@ export function buildOrderReceipt(job: PrintJob, copy: ReceiptCopy): Buffer {
   const chunks: Buffer[] = [];
   pushTitle(chunks, COPY_SUBTITLE[copy]);
 
-  const v2 = isV2Payload(job.payload);
-  if (v2) {
+  if (isV2Payload(job.payload)) {
     if (copy === "kitchen") {
-      console.log("[Receipt] renderer: pushKitchenV2");
       pushKitchenV2(chunks, job);
     } else {
-      console.log("[Receipt] renderer: pushCashierV2");
       pushCashierV2(chunks, job);
     }
   } else {
-    console.log("[Receipt] renderer: pushV1Body (legacy fallback)");
     pushV1Body(chunks, job);
   }
 
-  pushFooter(chunks);
+  const feedLines =
+    copy === "kitchen" ? FEED_BEFORE_CUT_KITCHEN : FEED_BEFORE_CUT_CASHIER;
+  pushFooter(chunks, feedLines);
   return Buffer.concat(chunks);
 }
 
-/**
- * Local dual-copy print buffer for one cloud PrintJob.
- * Prefer sending kitchen/cashier separately at runtime (see PrintWorker).
- */
 export function buildJobReceipts(job: PrintJob): Buffer {
   return Buffer.concat([buildOrderReceipt(job, "kitchen"), buildOrderReceipt(job, "cashier")]);
 }
 
-/** V2-capable kitchen copy (falls back to V1 layout when payload is legacy). */
 export function buildKitchenReceiptV2(job: PrintJob): Buffer {
   return buildOrderReceipt(job, "kitchen");
 }
 
-/** V2-capable cashier copy (falls back to V1 layout when payload is legacy). */
 export function buildCashierReceiptV2(job: PrintJob): Buffer {
   return buildOrderReceipt(job, "cashier");
 }
 
-/** Kitchen copy only. */
 export function buildKitchenReceipt(job: PrintJob): Buffer {
   return buildKitchenReceiptV2(job);
 }
@@ -487,15 +529,15 @@ export function buildKitchenTestReceipt(): Buffer {
   chunks.push(escpos.lineGB18030("桌号：01"));
   chunks.push(escpos.lineGB18030("订单号：MJH-TEST-001"));
   chunks.push(escpos.lineGB18030(SEPARATOR));
-  chunks.push(escpos.lineGB18030(padItemLine("担担面", "×1")));
-  chunks.push(escpos.lineGB18030(padItemLine("酸辣粉", "×2")));
-  chunks.push(escpos.lineGB18030(padItemLine("小火锅套餐", "×1")));
+  chunks.push(escpos.lineGB18030(padLeftRight("担担面", "×1", LINE_WIDTH)));
+  chunks.push(escpos.lineGB18030(padLeftRight("酸辣粉", "×2", LINE_WIDTH)));
+  chunks.push(escpos.lineGB18030(padLeftRight("小火锅套餐", "×1", LINE_WIDTH)));
   chunks.push(escpos.lineGB18030("汤底：牛油麻辣"));
   chunks.push(escpos.lineGB18030("备注：少辣，不要香菜"));
   chunks.push(escpos.lineGB18030(SEPARATOR));
   chunks.push(escpos.lineGB18030("XP-N160II"));
   chunks.push(escpos.lineGB18030("TCP 9100 TEST"));
 
-  pushFooter(chunks);
+  pushFooter(chunks, FEED_BEFORE_CUT_KITCHEN);
   return Buffer.concat(chunks);
 }
