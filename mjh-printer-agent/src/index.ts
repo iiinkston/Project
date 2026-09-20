@@ -5,13 +5,10 @@ import {
   readPackageVersion,
   resolveAgentTokenSource,
   resolveLockPath,
-  resolveStatePath,
   resolveStatusPath,
 } from "./config.js";
 import { configureLogger, logger } from "./logger.js";
 import { AgentAlreadyRunningError, AgentLock } from "./jobs/agent-lock.js";
-import { PrintWorker } from "./jobs/worker.js";
-import { StateStore } from "./jobs/state-store.js";
 import { StatusStore } from "./status.js";
 import { resolveRuntimePaths } from "./paths.js";
 import {
@@ -31,6 +28,7 @@ import { AGENT_BUILD } from "./version.js";
 import { markCurrentAsAgentProcess } from "./process/agent-process.js";
 import { runTestPrint } from "./printer/run-test-print.js";
 import { startLocalHttpServer, type LocalHttpServer } from "./local/http-server.js";
+import { AgentRuntime, setAgentRuntime } from "./runtime/agent-runtime.js";
 import "./printer/encodings-ensure.js";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
@@ -158,15 +156,15 @@ async function runAgent(options: { dryRun?: boolean } = {}): Promise<void> {
   logger.info(`[MJH] Logs: ${paths.logsDir}`, "STARTUP");
 
   let localApi: LocalHttpServer | undefined;
+  const runtime = new AgentRuntime(status);
+  setAgentRuntime(runtime);
+
   try {
     localApi = await startLocalHttpServer();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.warn(`[MJH] Local API failed to start: ${message}`, "STARTUP");
   }
-
-  const state = config ? new StateStore(resolveStatePath()) : null;
-  const worker = config && state ? new PrintWorker(config, state, { status }) : null;
 
   let shuttingDown = false;
   const shutdown = async () => {
@@ -175,7 +173,12 @@ async function runAgent(options: { dryRun?: boolean } = {}): Promise<void> {
     }
     shuttingDown = true;
     logger.info("[MJH] Shutting down...", "SHUTDOWN");
-    worker?.stop();
+    try {
+      await runtime.shutdown();
+    } catch {
+      // ignore
+    }
+    setAgentRuntime(null);
     if (localApi) {
       try {
         await localApi.close();
@@ -212,19 +215,28 @@ async function runAgent(options: { dryRun?: boolean } = {}): Promise<void> {
     void shutdown().finally(() => process.exit(1));
   });
 
-  if (!worker) {
-    logger.info("[MJH] Unbound mode: Local API only (no cloud poll until bind)", "STARTUP");
-    await new Promise<void>(() => {
-      // Keep process alive until signal
-    });
-    return;
+  if (unbound) {
+    logger.info(
+      "[MJH] Unbound mode: Local API only (worker starts after /local/bind)",
+      "STARTUP",
+    );
+  } else {
+    logger.info("[MJH] Bound mode: activating print worker", "STARTUP");
+    const activated = await runtime.activateBound();
+    if (!activated.ok) {
+      logger.warn(
+        `[MJH] Worker activate issue: ${activated.error ?? "unknown"}`,
+        "STARTUP",
+      );
+    } else if (activated.cloudOnline) {
+      logger.info("[MJH] Cloud online — polling active", "CLOUD_CONNECTED");
+    }
   }
 
-  try {
-    await worker.start();
-  } finally {
-    await shutdown();
-  }
+  // Keep process alive for Local API (+ worker loop if running).
+  await new Promise<void>(() => {
+    // resolved only via signal → shutdown → process.exit
+  });
 }
 
 export { resolveCommand };

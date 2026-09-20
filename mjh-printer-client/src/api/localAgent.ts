@@ -11,6 +11,7 @@ export type LocalStatus = {
   updatedAt: string | null;
   lastSyncAt: string | null;
   bound: boolean;
+  lifecycle?: "UNBOUND" | "BOUND_INITIALIZING" | "RUNNING" | "ERROR";
   storeName: string | null;
   cloud: { online: boolean };
   printer: {
@@ -45,6 +46,9 @@ export type BindResult = {
   success: true;
   storeName: string;
   agentName: string;
+  cloudOnline?: boolean;
+  printerOnline?: boolean;
+  lifecycle?: "UNBOUND" | "BOUND_INITIALIZING" | "RUNNING" | "ERROR";
 };
 
 function logTechnical(scope: string, message: string): void {

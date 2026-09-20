@@ -17,6 +17,23 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Cloud rejected Bearer token — keep process alive; do not wipe config. */
+export function isCloudAuthError(error: unknown): boolean {
+  const message = errorMessage(error);
+  return (
+    /HTTP 401\b/.test(message) ||
+    /PRINTER_UNAUTHORIZED/i.test(message) ||
+    /Invalid printer agent credentials/i.test(message)
+  );
+}
+
+function cloudErrorForStatus(error: unknown): string {
+  if (isCloudAuthError(error)) {
+    return `AUTH_FAILED: ${errorMessage(error).slice(0, 180)}`;
+  }
+  return errorMessage(error).slice(0, 200);
+}
+
 async function smallPrinterSafeDelay(): Promise<void> {
   await sleep(400);
 }
@@ -152,7 +169,7 @@ export class PrintWorker {
         await this.status?.patch((s) => {
           s.cloud.online = false;
           s.cloud.lastErrorAt = new Date().toISOString();
-          s.worker.lastError = errorMessage(error).slice(0, 200);
+          s.worker.lastError = cloudErrorForStatus(error);
         });
       }
 
@@ -210,7 +227,7 @@ export class PrintWorker {
         await this.status?.patch((s) => {
           s.cloud.online = false;
           s.cloud.lastErrorAt = new Date().toISOString();
-          s.worker.lastError = errorMessage(error).slice(0, 200);
+          s.worker.lastError = cloudErrorForStatus(error);
         });
         await sleep(this.nextCloudBackoffMs());
         return;

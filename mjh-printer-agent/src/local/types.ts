@@ -15,6 +15,8 @@ export type LocalStatusResponse = {
   lastSyncAt: string | null;
   /** True when agent.token (or env token) is configured. */
   bound: boolean;
+  /** Runtime lifecycle — Local API always up regardless. */
+  lifecycle: "UNBOUND" | "BOUND_INITIALIZING" | "RUNNING" | "ERROR";
   storeName: string | null;
   cloud: {
     online: boolean;
@@ -75,6 +77,10 @@ export type LocalBindResponse = {
   success: true;
   storeName: string;
   agentName: string;
+  /** True when worker started and cloud auth probe succeeded. */
+  cloudOnline: boolean;
+  printerOnline: boolean;
+  lifecycle: "UNBOUND" | "BOUND_INITIALIZING" | "RUNNING" | "ERROR";
 };
 
 export type LocalOkResponse = {

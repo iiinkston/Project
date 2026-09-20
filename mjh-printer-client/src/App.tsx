@@ -231,6 +231,7 @@ export function App() {
   const printerOk = Boolean(status?.printer.online);
   const bound = Boolean(status?.bound);
   const running = Boolean(agentUp && status?.running);
+  const authFailed = Boolean(status?.worker.lastError?.startsWith("AUTH_FAILED"));
 
   return (
     <div className="app">
@@ -289,6 +290,11 @@ export function App() {
                 {error ? `（${error}）` : ""}
               </p>
             )}
+            {agentUp && authFailed && (
+              <p className="hint" role="alert">
+                打印服务授权失效，请重新绑定门店
+              </p>
+            )}
           </section>
 
           <div className="grid">
@@ -307,7 +313,13 @@ export function App() {
                 <Dot ok={cloudOk} />
                 <div>
                   <div className="label">Cloud 连接</div>
-                  <div className="value">{cloudOk ? "已连接" : "离线 / 未知"}</div>
+                  <div className="value">
+                    {authFailed
+                      ? "授权失效"
+                      : cloudOk
+                        ? "已连接"
+                        : "离线 / 未知"}
+                  </div>
                 </div>
               </div>
             </section>

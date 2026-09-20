@@ -32,6 +32,7 @@ export function Wizard({ onComplete, initialStep = 1 }: Props) {
   const [code, setCode] = useState("");
   const [boundStore, setBoundStore] = useState<string | null>(null);
   const [agentConnected, setAgentConnected] = useState(false);
+  const [cloudOnline, setCloudOnline] = useState(false);
 
   const [discovered, setDiscovered] = useState<DiscoverHit[]>([]);
   const [printerSet, setPrinterSet] = useState(false);
@@ -76,29 +77,56 @@ export function Wizard({ onComplete, initialStep = 1 }: Props) {
       setError("请输入门店注册码");
       return;
     }
-    // 已绑定也可以再次提交同一长期注册码，不拦截 already bound。
     setBusy("正在绑定门店…");
     setError(null);
+    setCloudOnline(false);
     try {
       const r = await localAgent.bind(value);
       setBoundStore(r.storeName);
-      try {
-        await localAgent.status();
-        setAgentConnected(true);
-      } catch {
-        setAgentConnected(false);
+
+      setBusy("正在启动打印服务…");
+      const ready = await waitForAgentReady(30_000);
+      setAgentConnected(true);
+      setCloudOnline(ready.cloud.online);
+      if (ready.worker.lastError?.startsWith("AUTH_FAILED")) {
+        setError("打印服务授权失效，请重新绑定门店");
+        setCloudOnline(false);
+      } else if (!ready.cloud.online) {
+        setError(
+          ready.worker.lastError?.trim() ||
+            "门店已绑定，但云端连接未就绪，请稍后在首页刷新",
+        );
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : "";
       setError(message && message !== "[object Object]" ? message : "注册码无效，请检查后重试");
+      setAgentConnected(false);
+      setCloudOnline(false);
     } finally {
       setBusy(null);
     }
   }
 
+  async function waitForAgentReady(timeoutMs: number) {
+    const start = Date.now();
+    let last = await localAgent.status();
+    while (Date.now() - start < timeoutMs) {
+      last = await localAgent.status();
+      if (last.bound && last.cloud.online) {
+        return last;
+      }
+      if (last.bound && last.worker.lastError?.startsWith("AUTH_FAILED")) {
+        return last;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return last;
+  }
+
   function resetBindForm() {
     setBoundStore(null);
     setAgentConnected(false);
+    setCloudOnline(false);
     setError(null);
   }
 
@@ -239,17 +267,28 @@ export function Wizard({ onComplete, initialStep = 1 }: Props) {
             {boundStore ? (
               <>
                 <div className="wiz-success">
-                  <div className="label">绑定成功</div>
+                  <div className="label">门店绑定成功</div>
                   <ul className="wiz-result">
                     <li>✓ {boundStore}</li>
-                    <li>{agentConnected ? "✓ 打印服务已连接" : "打印服务未连接"}</li>
+                    <li>
+                      {cloudOnline
+                        ? "✓ 云端连接正常"
+                        : agentConnected
+                          ? "打印服务已启动，云端连接确认中…"
+                          : "打印服务未连接"}
+                    </li>
                   </ul>
                 </div>
                 <div className="actions">
                   <button type="button" onClick={resetBindForm}>
                     重新绑定
                   </button>
-                  <button className="primary" type="button" onClick={() => setStep(4)}>
+                  <button
+                    className="primary"
+                    type="button"
+                    disabled={!cloudOnline}
+                    onClick={() => setStep(4)}
+                  >
                     继续
                   </button>
                 </div>

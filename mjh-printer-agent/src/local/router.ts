@@ -17,6 +17,7 @@ import { runTestPrint } from "../printer/run-test-print.js";
 import { logger } from "../logger.js";
 import { discoverPrinters9100 } from "./discover.js";
 import { handleUpdateApply, handleUpdateCheck } from "./update.js";
+import { getAgentRuntime } from "../runtime/agent-runtime.js";
 import type {
   LocalBindBody,
   LocalBindResponse,
@@ -57,6 +58,10 @@ export async function handleLocalStatus(): Promise<LocalStatusResponse> {
   const file = loadFileConfig(resolveConfigPath());
   const status = await readStatusFile(resolveStatusPath());
   const bound = hasTokenConfigured(file);
+  const runtime = getAgentRuntime();
+  const lifecycle =
+    runtime?.getLifecycle() ??
+    (bound ? ("RUNNING" as const) : ("UNBOUND" as const));
 
   const lastPollAt = status?.worker.lastPollAt ?? null;
   const lastClaimAt = status?.worker.lastClaimAt ?? null;
@@ -71,6 +76,7 @@ export async function handleLocalStatus(): Promise<LocalStatusResponse> {
     updatedAt: status?.updatedAt ?? null,
     lastSyncAt,
     bound,
+    lifecycle,
     storeName: file.store.name?.trim() || null,
     cloud: {
       online: Boolean(status?.cloud.online),
@@ -212,10 +218,36 @@ export async function handleLocalBind(
       "LOCAL",
     );
 
+    const runtime = getAgentRuntime();
+    let cloudOnline = false;
+    let printerOnline = false;
+    let lifecycle: LocalBindResponse["lifecycle"] = "BOUND_INITIALIZING";
+    if (runtime) {
+      const activated = await runtime.activateBound();
+      cloudOnline = activated.cloudOnline;
+      printerOnline = activated.printerOnline;
+      lifecycle = activated.lifecycle;
+      if (!activated.ok && activated.error?.startsWith("AUTH_FAILED")) {
+        // Credentials saved; worker running but auth rejected — surface clearly.
+        logger.warn(`[LocalAPI] bind wrote credentials but AUTH_FAILED`, "LOCAL");
+      } else if (!activated.ok && activated.error) {
+        logger.warn(`[LocalAPI] worker activate: ${activated.error}`, "LOCAL");
+      }
+    } else {
+      logger.warn(
+        "[LocalAPI] bind wrote credentials but AgentRuntime missing — restart required",
+        "LOCAL",
+      );
+      lifecycle = "ERROR";
+    }
+
     const response: LocalBindResponse = {
       success: true,
       storeName: paired.storeName,
       agentName: paired.agentName,
+      cloudOnline,
+      printerOnline,
+      lifecycle,
     };
     assertNoSecrets(response);
     return response;
