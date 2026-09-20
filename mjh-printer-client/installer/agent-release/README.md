@@ -1,6 +1,6 @@
-# 满江红打印机代理 MJH Printer Agent v2.4.0
+# 满江红打印机代理 MJH Printer Agent v2.4.1
 
-Build: `2026-09-19T12:47:28Z`
+Build: `2026-09-19T19:40:47Z`
 
 ## 安装（管理员 PowerShell）
 

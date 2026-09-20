@@ -231,6 +231,12 @@ app.whenReady().then(() => {
   }
   ipcMain.on("mjh:show-window", () => showMainWindow());
   ipcMain.handle("mjh:get-version", () => app.getVersion());
+  ipcMain.handle("mjh:log", (_event, message) => {
+    const text = String(message ?? "")
+      .replace(/("token"\s*:\s*")[^"]*"/gi, '$1***')
+      .slice(0, 500);
+    logLine(text);
+  });
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
     else showMainWindow();

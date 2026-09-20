@@ -1,3 +1,5 @@
+import { bindRequestBody, extractApiErrorMessage, userBindMessage } from "./bindError";
+
 export const LOCAL_AGENT_BASE = "http://127.0.0.1:17890";
 
 export type LocalStatus = {
@@ -45,13 +47,9 @@ export type BindResult = {
   agentName: string;
 };
 
-function errorText(error: unknown): string {
-  if (typeof error === "string" && error.trim() && error !== "[object Object]") return error;
-  if (error && typeof error === "object" && "message" in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === "string" && message.trim()) return message;
-  }
-  return "";
+function logTechnical(scope: string, message: string): void {
+  const safe = message.replace(/("token"\s*:\s*")[^"]*"/gi, '$1***').slice(0, 400);
+  void window.mjhDesktop?.log?.(`${scope} ${safe}`);
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -71,11 +69,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`Agent 返回非 JSON (${res.status})`);
   }
   if (!res.ok) {
-    const err =
-      typeof body === "object" && body && "error" in body
-        ? errorText((body as { error: unknown }).error)
-        : text.slice(0, 200);
-    throw new Error(err || `HTTP ${res.status}`);
+    const technical = extractApiErrorMessage(body) || text.slice(0, 200) || `HTTP ${res.status}`;
+    if (path === "/local/bind") {
+      logTechnical("bind failed", technical);
+      throw new Error(userBindMessage(technical));
+    }
+    throw new Error(technical === "[object Object]" ? `HTTP ${res.status}` : technical);
   }
   return body as T;
 }
@@ -88,7 +87,7 @@ export const localAgent = {
   bind: (code: string) =>
     request<BindResult>("/local/bind", {
       method: "POST",
-      body: JSON.stringify({ code }),
+      body: JSON.stringify(bindRequestBody(code)),
     }),
   testPrint: () =>
     request<{ ok: boolean; message?: string; error?: string }>("/local/printer/test", {

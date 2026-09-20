@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("mjhDesktop", {
   platform: process.platform,
   getVersion: () => ipcRenderer.invoke("mjh:get-version"),
+  log: (message) => ipcRenderer.invoke("mjh:log", String(message ?? "").slice(0, 500)),
   onNavigate: (callback) => {
     const handler = (_event, tab) => {
       if (typeof callback === "function") callback(tab);

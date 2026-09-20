@@ -9,6 +9,7 @@ declare global {
     mjhDesktop?: {
       platform: string;
       getVersion?: () => Promise<string>;
+      log?: (message: string) => Promise<void>;
       onNavigate?: (callback: (tab: string) => void) => (() => void) | void;
     };
   }

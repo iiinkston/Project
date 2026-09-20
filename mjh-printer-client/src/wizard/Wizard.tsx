@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { localAgent, type DiscoverHit } from "../api/localAgent";
 
+type Step = 1 | 2 | 3 | 4 | 5;
+
 type Props = {
   onComplete: () => void;
+  initialStep?: Step;
 };
-
-type Step = 1 | 2 | 3 | 4 | 5;
 
 type CheckState = "idle" | "checking" | "pass" | "fail";
 
@@ -19,8 +20,8 @@ function Badge({ state }: { state: CheckState }) {
   return <span className="wiz-badge fail">FAIL</span>;
 }
 
-export function Wizard({ onComplete }: Props) {
-  const [step, setStep] = useState<Step>(1);
+export function Wizard({ onComplete, initialStep = 1 }: Props) {
+  const [step, setStep] = useState<Step>(initialStep);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,8 +29,9 @@ export function Wizard({ onComplete }: Props) {
   const [netOk, setNetOk] = useState<CheckState>("idle");
   const [printerOk, setPrinterOk] = useState<CheckState>("idle");
 
-  const [pairCode, setPairCode] = useState("");
+  const [code, setCode] = useState("");
   const [boundStore, setBoundStore] = useState<string | null>(null);
+  const [agentConnected, setAgentConnected] = useState(false);
 
   const [discovered, setDiscovered] = useState<DiscoverHit[]>([]);
   const [printerSet, setPrinterSet] = useState(false);
@@ -69,21 +71,35 @@ export function Wizard({ onComplete }: Props) {
   }, [step, runEnvCheck]);
 
   async function onBind() {
-    const code = pairCode.trim();
-    if (!code) {
+    const value = code.trim();
+    if (!value) {
       setError("请输入门店注册码");
       return;
     }
+    // 已绑定也可以再次提交同一长期注册码，不拦截 already bound。
     setBusy("正在绑定门店…");
     setError(null);
     try {
-      const r = await localAgent.bind(code);
+      const r = await localAgent.bind(value);
       setBoundStore(r.storeName);
+      try {
+        await localAgent.status();
+        setAgentConnected(true);
+      } catch {
+        setAgentConnected(false);
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : "";
+      setError(message && message !== "[object Object]" ? message : "注册码无效，请检查后重试");
     } finally {
       setBusy(null);
     }
+  }
+
+  function resetBindForm() {
+    setBoundStore(null);
+    setAgentConnected(false);
+    setError(null);
   }
 
   async function onDiscover() {
@@ -162,7 +178,7 @@ export function Wizard({ onComplete }: Props) {
             <p className="wiz-eyebrow">满江红 · 厨房打印</p>
             <h1>欢迎使用满江红打印助手</h1>
             <p className="sub">
-              本向导：检测 Agent → 输入注册码 → 绑定门店 → 扫描打印机 → 选择 XP-N160II →
+              本向导：检测 Agent → 输入门店注册码 → 绑定门店 → 扫描打印机 → 选择 XP-N160II →
               测试打印 → 进入控制台。全程无需 PowerShell。
             </p>
             <div className="actions">
@@ -219,14 +235,20 @@ export function Wizard({ onComplete }: Props) {
         {step === 3 && (
           <section className="card wizard-card">
             <h1>绑定门店</h1>
-            <p className="sub">请输入总部发放的门店注册码。绑定成功后不会显示令牌。</p>
+            <p className="sub">请输入总部提供的门店注册码。</p>
             {boundStore ? (
               <>
                 <div className="wiz-success">
-                  <div className="label">已绑定门店</div>
-                  <div className="value">{boundStore}</div>
+                  <div className="label">绑定成功</div>
+                  <ul className="wiz-result">
+                    <li>✓ {boundStore}</li>
+                    <li>{agentConnected ? "✓ 打印服务已连接" : "打印服务未连接"}</li>
+                  </ul>
                 </div>
                 <div className="actions">
+                  <button type="button" onClick={resetBindForm}>
+                    重新绑定
+                  </button>
                   <button className="primary" type="button" onClick={() => setStep(4)}>
                     继续
                   </button>
@@ -235,11 +257,11 @@ export function Wizard({ onComplete }: Props) {
             ) : (
               <>
                 <label className="field">
-                  <span>注册码</span>
+                  <span>门店注册码</span>
                   <input
-                    value={pairCode}
-                    onChange={(e) => setPairCode(e.target.value)}
-                    placeholder="请输入配对码"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    placeholder="例如 MJH-001"
                     autoComplete="off"
                     spellCheck={false}
                   />
@@ -251,7 +273,7 @@ export function Wizard({ onComplete }: Props) {
                   <button
                     className="primary"
                     type="button"
-                    disabled={!!busy || !pairCode.trim()}
+                    disabled={!!busy || !code.trim()}
                     onClick={() => void onBind()}
                   >
                     绑定

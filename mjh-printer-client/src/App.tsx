@@ -34,6 +34,7 @@ export function App() {
   const [portDraft, setPortDraft] = useState("9100");
   const [toast, setToast] = useState<string | null>(null);
   const [showWizard, setShowWizard] = useState<boolean | null>(null);
+  const [wizardStart, setWizardStart] = useState<1 | 3>(1);
   const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(null);
   const [clientVersion, setClientVersion] = useState<string>("1.0.0");
 
@@ -107,8 +108,14 @@ export function App() {
 
   function onWizardComplete() {
     localStorage.setItem(WIZARD_DONE_KEY, "1");
+    setWizardStart(1);
     setShowWizard(false);
     void refresh();
+  }
+
+  function openRebind() {
+    setWizardStart(3);
+    setShowWizard(true);
   }
 
   async function onTestPrint() {
@@ -217,7 +224,7 @@ export function App() {
   }
 
   if (showWizard) {
-    return <Wizard onComplete={onWizardComplete} />;
+    return <Wizard onComplete={onWizardComplete} initialStep={wizardStart} />;
   }
 
   const cloudOk = Boolean(status?.cloud.online);
@@ -291,7 +298,7 @@ export function App() {
                 <div>
                   <div className="label">绑定门店</div>
                   <div className="value">{bound ? status?.storeName || "已绑定" : "未绑定"}</div>
-                  <div className="muted">{bound ? "已绑定" : "请完成向导配对"}</div>
+                  <div className="muted">{bound ? "已绑定，可重新绑定" : "请完成向导配对"}</div>
                 </div>
               </div>
             </section>
@@ -337,6 +344,9 @@ export function App() {
             </button>
             <button disabled={!agentUp} onClick={() => setTab("printer")}>
               打印机设置
+            </button>
+            <button disabled={!agentUp} onClick={openRebind}>
+              重新绑定
             </button>
             <button disabled={!agentUp} onClick={() => setTab("settings")}>
               检查更新
