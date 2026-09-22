@@ -148,11 +148,6 @@ if (Test-Path $UpdateScriptSrc) {
   Copy-Item -Force $UpdateScriptSrc (Join-Path $InstallDir "update-agent.ps1")
   Write-Host "update-agent.ps1 installed beside EXE"
 }
-$HelperSrcEarly = Join-Path $PackageRoot "apply-update-helper.ps1"
-if (Test-Path $HelperSrcEarly) {
-  Copy-Item -Force $HelperSrcEarly (Join-Path $InstallDir "apply-update-helper.ps1")
-  Write-Host "apply-update-helper.ps1 installed beside EXE"
-}
 Write-Host "EXE installed to $InstallDir"
 
 # 5) Preserve existing ProgramData config (especially agent.token)
@@ -237,48 +232,6 @@ $Settings = New-ScheduledTaskSettingsSet `
 $Principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 
 Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Principal $Principal -Force | Out-Null
-
-# OTA Apply helper task: SYSTEM + Highest; Authenticated Users may /Run without UAC
-$UpdateTaskName = "MJH Printer Agent Update"
-$HelperScript = Join-Path $InstallDir "apply-update-helper.ps1"
-if (-not (Test-Path -LiteralPath $HelperScript)) {
-  $pkgHelper = Join-Path $PackageRoot "apply-update-helper.ps1"
-  if (Test-Path -LiteralPath $pkgHelper) {
-    Copy-Item -Force $pkgHelper $HelperScript
-  }
-}
-if (Test-Path -LiteralPath $HelperScript) {
-  $existingUpdate = Get-ScheduledTask -TaskName $UpdateTaskName -ErrorAction SilentlyContinue
-  if ($existingUpdate) {
-    Unregister-ScheduledTask -TaskName $UpdateTaskName -Confirm:$false -ErrorAction SilentlyContinue
-  }
-  $UpdateAction = New-ScheduledTaskAction `
-    -Execute "powershell.exe" `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$HelperScript`"" `
-    -WorkingDirectory $InstallDir
-  $UpdateSettings = New-ScheduledTaskSettingsSet `
-    -AllowStartIfOnBatteries `
-    -DontStopIfGoingOnBatteries `
-    -StartWhenAvailable `
-    -ExecutionTimeLimit (New-TimeSpan -Minutes 30) `
-    -MultipleInstances IgnoreNew
-  $UpdatePrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-  Register-ScheduledTask -TaskName $UpdateTaskName -Action $UpdateAction -Settings $UpdateSettings -Principal $UpdatePrincipal -Force | Out-Null
-  try {
-    $svc = New-Object -ComObject "Schedule.Service"
-    $svc.Connect()
-    $folder = $svc.GetFolder("\")
-    $task = $folder.GetTask($UpdateTaskName)
-    # BA/SY full; Authenticated Users read+execute (run without admin UAC)
-    $sddl = "D:AR(A;;FA;;;BA)(A;;FA;;;SY)(A;;0x1200a9;;;AU)"
-    $task.SetSecurityDescriptor($sddl, 0)
-    Write-Host "Registered elevated OTA task: $UpdateTaskName (Users may Run)"
-  } catch {
-    Write-Warning "Could not set OTA task ACL (schtasks /Run may require admin): $($_.Exception.Message)"
-  }
-} else {
-  Write-Warning "apply-update-helper.ps1 missing — Local API Apply will fall back to UAC RunAs"
-}
 
 Start-ScheduledTask -TaskName $TaskName
 Start-Sleep -Seconds 5

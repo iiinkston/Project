@@ -104,4 +104,8 @@ export type LocalOkResponse = {
 export type LocalErrorResponse = {
   ok: false;
   error: string;
+  /** Machine-readable failure code (e.g. ELEVATION_REQUIRED). */
+  code?: string;
+  /** True when an elevated updater was started but Apply is not complete yet. */
+  elevationStarted?: boolean;
 };

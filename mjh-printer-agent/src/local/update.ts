@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
 import { getExecutableDir, resolveProgramDataRoot } from "../paths.js";
 import { AGENT_VERSION } from "../version.js";
 import { logger } from "../logger.js";
 import type { LocalUpdateCheckResponse, LocalOkResponse, LocalErrorResponse } from "./types.js";
+import { ELEVATION_REQUIRED, launchElevatedUpdateApply } from "./update-elevation.js";
 
 const EXE_NAME = "MJH-Printer-Agent.exe";
 const UPDATE_SCRIPT = "update-agent.ps1";
@@ -142,7 +142,8 @@ export function handleUpdateCheck(): LocalUpdateCheckResponse {
 }
 
 /**
- * Kick off existing update-agent.ps1 (detached). Does not copy EXE itself.
+ * Kick off update-agent.ps1 via elevated permission chain.
+ * Never returns ok:true for a non-elevated empty spawn.
  */
 export function handleUpdateApply(): LocalOkResponse | LocalErrorResponse {
   const check = handleUpdateCheck();
@@ -164,29 +165,34 @@ export function handleUpdateApply(): LocalOkResponse | LocalErrorResponse {
   }
 
   logger.info(`[LocalAPI] update start source=${source} script=${script}`, "UPDATE");
-  logger.info("OTA APPLY via update-agent.ps1 (elevated)", "OTA");
 
-  // update-agent.ps1 requires Administrator (#Requires -RunAsAdministrator).
-  // Spawn via Start-Process -Verb RunAs so UAC elevates; otherwise Apply is a no-op
-  // while Local API still returns ok:true.
-  const psEsc = (p: string) => p.replace(/'/g, "''");
-  const elevateCmd =
-    `Start-Process -FilePath 'powershell.exe' -Verb RunAs -WindowStyle Hidden ` +
-    `-ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File','${psEsc(script)}','-Source','${psEsc(source)}')`;
+  const launched = launchElevatedUpdateApply({
+    scriptPath: script,
+    sourcePath: source,
+  });
 
-  const child = spawn(
-    "powershell.exe",
-    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", elevateCmd],
-    {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-    },
-  );
-  child.unref();
+  if (!launched.ok) {
+    logger.error(`OTA APPLY FAILED ${launched.error}`, "OTA");
+    return { ok: false, error: launched.error };
+  }
 
+  if (launched.mode === "direct") {
+    return {
+      ok: true,
+      message: "已启动更新，Agent 将重启。请稍候刷新状态。",
+    };
+  }
+
+  // Non-admin: updater started elevated, but do NOT claim Apply success.
+  const via =
+    launched.mode === "scheduled-task"
+      ? "计划任务（SYSTEM）"
+      : "UAC 提权";
+  logger.info(`OTA APPLY ELEVATION_REQUIRED via=${launched.mode}`, "OTA");
   return {
-    ok: true,
-    message: "已请求管理员权限启动更新，确认 UAC 后 Agent 将重启。请稍候刷新状态。",
+    ok: false,
+    code: ELEVATION_REQUIRED,
+    elevationStarted: true,
+    error: `ELEVATION_REQUIRED：已通过${via}启动提权更新，请稍候刷新状态（未在本进程完成 Apply，禁止视为成功）。`,
   };
 }
