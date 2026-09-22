@@ -1,0 +1,8 @@
+﻿{
+    "clientBytes":  97115825,
+    "AGENT_UPDATE_SHA256":  "8acba63f58dc28ec863ee267e929910089876a167240b90cfbce34ebce9fb9e9",
+    "CLIENT_UPDATE_SHA256":  "b6314b9989f2e5dedd17d59d97fca9278b85a38c6f019c32f620a0e57c9289b1",
+    "agentZipName":  "MJH-Printer-Agent-v2.4.4.zip",
+    "note":  "User asked Agent-2.4.4.zip; actual release asset is MJH-Printer-Agent-v2.4.4.zip",
+    "agentBytes":  21931207
+}

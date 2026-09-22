@@ -1,0 +1,19 @@
+{
+  "version": "v1.0.4",
+  "clientVersion": "1.0.4",
+  "agentVersion": "2.4.4",
+  "downloadUrl": {
+    "client": "https://github.com/iiinkston/Project/releases/download/v1.0.4/MJH-Printer-Setup.exe",
+    "agent": "https://github.com/iiinkston/Project/releases/download/v1.0.4/MJH-Printer-Agent-v2.4.4-win-x64.zip"
+  },
+  "assets": {
+    "clientSetup": "MJH-Printer-Setup.exe",
+    "agentZips": [
+      "MJH-Printer-Agent-v2.4.4-win-x64.zip",
+      "MJH-Printer-Agent-v2.4.4.zip"
+    ]
+  },
+  "repository": "iiinkston/Project",
+  "commit": "c3a1e04b10a40ec38964936134b390d67fdb2df3",
+  "publishedAt": "2026-09-22T04:47:15.3716977Z"
+}
