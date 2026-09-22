@@ -1,6 +1,8 @@
 import { logger } from "../logger.js";
 import { loadOtaConfig, isOtaRemoteEnabled } from "./ota-config.js";
-import { remoteUpdateManifestSchema, type RemoteUpdateManifest } from "./ota-types.js";
+import { parseRemoteAgentManifest } from "./ota-manifest-normalize.js";
+import type { RemoteUpdateManifest } from "./ota-types.js";
+import { stripBom } from "./json-bom.js";
 
 export async function fetchRemoteUpdateManifest(options?: {
   manifestUrl?: string;
@@ -30,15 +32,11 @@ export async function fetchRemoteUpdateManifest(options?: {
     }
     let parsed: unknown;
     try {
-      parsed = text ? JSON.parse(text) : undefined;
+      parsed = text ? JSON.parse(stripBom(text)) : undefined;
     } catch {
       throw new Error("manifest returned non-JSON");
     }
-    const ok = remoteUpdateManifestSchema.safeParse(parsed);
-    if (!ok.success) {
-      throw new Error(`invalid manifest: ${ok.error.message}`);
-    }
-    return ok.data;
+    return parseRemoteAgentManifest(parsed);
   } finally {
     clearTimeout(timer);
   }

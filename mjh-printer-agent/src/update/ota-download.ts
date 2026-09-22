@@ -1,14 +1,19 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
+  copyFileSync,
   createReadStream,
   createWriteStream,
   existsSync,
   mkdirSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
-  renameSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { logger } from "../logger.js";
@@ -16,9 +21,14 @@ import { resolveUpdatesDir, type UpdateManifest } from "../local/update.js";
 import type { RemoteUpdateManifest } from "./ota-types.js";
 
 const EXE_NAME = "MJH-Printer-Agent.exe";
+const ZIP_NAME = "MJH-Printer-Agent.zip";
 
 export function normalizeSha256(value: string): string {
-  return value.trim().toLowerCase().replace(/^sha256:/i, "");
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^sha256:/i, "")
+    .replace(/\s+/g, "");
 }
 
 export async function sha256File(path: string): Promise<string> {
@@ -40,9 +50,92 @@ export type DownloadResult = {
   error: string;
 };
 
+function looksLikeZip(url: string): boolean {
+  try {
+    const pathname = new URL(url).pathname.toLowerCase();
+    return pathname.endsWith(".zip");
+  } catch {
+    return /\.zip(\?|#|$)/i.test(url);
+  }
+}
+
+/** Recursively locate MJH-Printer-Agent.exe under extractDir. */
+export function findStagedAgentExe(extractDir: string): string | null {
+  const stack = [extractDir];
+  while (stack.length > 0) {
+    const dir = stack.pop()!;
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const name of entries) {
+      const full = join(dir, name);
+      let st;
+      try {
+        st = statSync(full);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) {
+        stack.push(full);
+      } else if (name.toLowerCase() === EXE_NAME.toLowerCase()) {
+        return full;
+      }
+    }
+  }
+  return null;
+}
+
 /**
- * Download remote EXE into ProgramData updates\, verify SHA256, write local manifest.json.
- * Incomplete downloads are removed.
+ * Extract zip and copy MJH-Printer-Agent.exe to destExePath.
+ * Uses PowerShell Expand-Archive (Windows storefront).
+ */
+export function extractAgentExeFromZip(zipPath: string, destExePath: string): void {
+  const extractDir = join(dirname(zipPath), `.extract-${Date.now()}`);
+  mkdirSync(extractDir, { recursive: true });
+  try {
+    const zipLit = zipPath.replace(/'/g, "''");
+    const destLit = extractDir.replace(/'/g, "''");
+    execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `Expand-Archive -LiteralPath '${zipLit}' -DestinationPath '${destLit}' -Force`,
+      ],
+      { windowsHide: true, timeout: 120_000 },
+    );
+    const found = findStagedAgentExe(extractDir);
+    if (!found) {
+      throw new Error("zip missing MJH-Printer-Agent.exe");
+    }
+    mkdirSync(dirname(destExePath), { recursive: true });
+    if (existsSync(destExePath)) {
+      try {
+        unlinkSync(destExePath);
+      } catch {
+        // ignore
+      }
+    }
+    copyFileSync(found, destExePath);
+  } finally {
+    try {
+      rmSync(extractDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Download remote package (EXE or ZIP) into ProgramData updates\,
+ * verify SHA256 of the downloaded package, stage MJH-Printer-Agent.exe,
+ * write local manifest.json. Incomplete downloads are removed.
+ *
+ * Apply still uses update-agent.ps1 -Source EXE (unchanged).
  */
 export async function downloadAndStageUpdate(
   remote: RemoteUpdateManifest,
@@ -51,12 +144,15 @@ export async function downloadAndStageUpdate(
   const updatesDir = resolveUpdatesDir();
   mkdirSync(updatesDir, { recursive: true });
 
-  const finalPath = join(updatesDir, EXE_NAME);
-  const partialPath = join(updatesDir, `${EXE_NAME}.partial`);
+  const finalExePath = join(updatesDir, EXE_NAME);
+  const isZip = looksLikeZip(remote.agentUrl);
+  const packageName = isZip ? ZIP_NAME : EXE_NAME;
+  const finalPackagePath = join(updatesDir, packageName);
+  const partialPath = join(updatesDir, `${packageName}.partial`);
   const expected = normalizeSha256(remote.sha256);
 
   logger.info(
-    `OTA DOWNLOAD START version=${remote.agentVersion} url=${remote.agentUrl}`,
+    `OTA DOWNLOAD START version=${remote.agentVersion} url=${remote.agentUrl} package=${packageName}`,
     "OTA",
   );
 
@@ -101,14 +197,37 @@ export async function downloadAndStageUpdate(
 
     logger.info("SHA256 VERIFIED", "OTA");
 
-    if (existsSync(finalPath)) {
+    if (existsSync(finalPackagePath)) {
       try {
-        unlinkSync(finalPath);
+        unlinkSync(finalPackagePath);
       } catch {
         // ignore
       }
     }
-    renameSync(partialPath, finalPath);
+    renameSync(partialPath, finalPackagePath);
+
+    if (isZip) {
+      logger.info("OTA EXTRACT zip → MJH-Printer-Agent.exe", "OTA");
+      extractAgentExeFromZip(finalPackagePath, finalExePath);
+      try {
+        unlinkSync(finalPackagePath);
+      } catch {
+        // keep zip if delete fails; EXE is what apply needs
+      }
+    } else if (finalPackagePath !== finalExePath) {
+      if (existsSync(finalExePath)) {
+        try {
+          unlinkSync(finalExePath);
+        } catch {
+          // ignore
+        }
+      }
+      renameSync(finalPackagePath, finalExePath);
+    }
+
+    if (!existsSync(finalExePath)) {
+      throw new Error("staged MJH-Printer-Agent.exe missing after download");
+    }
 
     const localManifest: UpdateManifest & { sha256?: string; channel?: string } = {
       latestVersion: remote.agentVersion,
@@ -128,7 +247,7 @@ export async function downloadAndStageUpdate(
     return {
       ok: true,
       version: remote.agentVersion,
-      exePath: finalPath,
+      exePath: finalExePath,
       sha256: actual,
     };
   } catch (error) {

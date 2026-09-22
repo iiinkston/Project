@@ -6,6 +6,7 @@ const path = require("node:path");
 const { pipeline } = require("node:stream/promises");
 const { createWriteStream, createReadStream } = require("node:fs");
 const { Readable } = require("node:stream");
+const { stripBom, parseJsonText } = require("./json-bom.cjs");
 
 const SETUP_NAME = "MJH Printer Setup.exe";
 
@@ -32,25 +33,41 @@ function normalizeSha256(value) {
   return String(value || "")
     .trim()
     .toLowerCase()
-    .replace(/^sha256:/i, "");
+    .replace(/^sha256:/i, "")
+    .replace(/\s+/g, "");
 }
 
+/**
+ * Accept flat (clientVersion/…) and nested (client.version/…) Cloud manifests.
+ * @param {unknown} raw
+ */
 function parseClientManifest(raw) {
   if (!raw || typeof raw !== "object") {
     throw new Error("invalid client manifest");
   }
-  const clientVersion = String(raw.clientVersion || "").trim();
-  const clientUrl = String(raw.clientUrl || "").trim();
-  const clientSha256 = normalizeSha256(raw.clientSha256 || "");
+  /** @type {Record<string, unknown>} */
+  const o = /** @type {Record<string, unknown>} */ (raw);
+  const nested =
+    o.client && typeof o.client === "object"
+      ? /** @type {Record<string, unknown>} */ (o.client)
+      : null;
+
+  const clientVersion = String(
+    o.clientVersion ?? nested?.version ?? "",
+  ).trim();
+  const clientUrl = String(o.clientUrl ?? nested?.url ?? "").trim();
+  const clientSha256 = normalizeSha256(
+    o.clientSha256 ?? nested?.sha256 ?? "",
+  );
   if (!clientVersion) throw new Error("manifest missing clientVersion");
   if (!clientUrl) throw new Error("manifest missing clientUrl");
   if (clientSha256.length < 16) throw new Error("manifest missing clientSha256");
+  const notesRaw = o.releaseNotes ?? nested?.releaseNotes;
   return {
     clientVersion,
     clientUrl,
     clientSha256,
-    releaseNotes:
-      typeof raw.releaseNotes === "string" ? raw.releaseNotes.trim() : null,
+    releaseNotes: typeof notesRaw === "string" ? notesRaw.trim() : null,
   };
 }
 
@@ -75,12 +92,14 @@ function defaultOtaConfig() {
 function loadOtaConfig(configPath) {
   try {
     if (!configPath || !fs.existsSync(configPath)) return defaultOtaConfig();
-    const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const raw = parseJsonText(fs.readFileSync(configPath, "utf8"));
+    if (!raw || typeof raw !== "object") return defaultOtaConfig();
+    const o = /** @type {Record<string, unknown>} */ (raw);
     return {
-      enabled: Boolean(raw.enabled),
-      channel: String(raw.channel || "stable"),
-      manifestUrl: String(raw.manifestUrl || "").trim(),
-      checkIntervalMinutes: Number(raw.checkIntervalMinutes) || 360,
+      enabled: Boolean(o.enabled),
+      channel: String(o.channel || "stable"),
+      manifestUrl: String(o.manifestUrl || "").trim(),
+      checkIntervalMinutes: Number(o.checkIntervalMinutes) || 360,
     };
   } catch {
     return defaultOtaConfig();
@@ -90,7 +109,9 @@ function loadOtaConfig(configPath) {
 function readJsonSafe(filePath, fallback) {
   try {
     if (!fs.existsSync(filePath)) return fallback;
-    return { ...fallback, ...JSON.parse(fs.readFileSync(filePath, "utf8")) };
+    const parsed = parseJsonText(fs.readFileSync(filePath, "utf8"));
+    if (!parsed || typeof parsed !== "object") return fallback;
+    return { ...fallback, ...parsed };
   } catch {
     return fallback;
   }
@@ -171,4 +192,5 @@ module.exports = {
   readJsonSafe,
   writeJson,
   downloadVerifiedFile,
+  stripBom,
 };

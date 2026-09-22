@@ -13,6 +13,8 @@ const {
   normalizeSha256,
   parseClientManifest,
   downloadVerifiedFile,
+  loadOtaConfig,
+  stripBom,
 } = require("./client-update-lib.cjs");
 
 test("compareVersions orders semver-ish strings", () => {
@@ -33,8 +35,69 @@ test("parseClientManifest requires version url sha", () => {
   assert.throws(() => parseClientManifest({ clientVersion: "1.0.3" }), /clientUrl/);
 });
 
-test("normalizeSha256 strips prefix", () => {
+test("parseClientManifest accepts nested client.version Cloud schema", () => {
+  const m = parseClientManifest({
+    client: {
+      version: "1.0.4",
+      url: "https://cdn.example.com/MJH-Printer-Setup.exe",
+      sha256: "b".repeat(64),
+    },
+    agent: {
+      version: "2.4.4",
+      url: "https://cdn.example.com/agent.zip",
+      sha256: "c".repeat(64),
+    },
+  });
+  assert.equal(m.clientVersion, "1.0.4");
+  assert.equal(m.clientUrl, "https://cdn.example.com/MJH-Printer-Setup.exe");
+  assert.equal(m.clientSha256, "b".repeat(64));
+});
+
+test("normalizeSha256 strips prefix and whitespace", () => {
   assert.equal(normalizeSha256("SHA256:AbCdEf"), "abcdef");
+  assert.equal(normalizeSha256(" ab cd "), "abcd");
+});
+
+test("stripBom removes UTF-8 BOM", () => {
+  assert.equal(stripBom("\uFEFF{\"enabled\":true}"), "{\"enabled\":true}");
+  assert.equal(stripBom("{\"enabled\":true}"), "{\"enabled\":true}");
+});
+
+test("loadOtaConfig accepts UTF-8 with and without BOM", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "mjh-client-ota-cfg-"));
+  try {
+    const noBom = join(dir, "no-bom.json");
+    await writeFile(
+      noBom,
+      JSON.stringify({
+        enabled: true,
+        channel: "stable",
+        manifestUrl: "http://127.0.0.1/m",
+        checkIntervalMinutes: 60,
+      }),
+      "utf8",
+    );
+    const cfg1 = loadOtaConfig(noBom);
+    assert.equal(cfg1.enabled, true);
+    assert.equal(cfg1.manifestUrl, "http://127.0.0.1/m");
+
+    const withBom = join(dir, "bom.json");
+    await writeFile(
+      withBom,
+      `\uFEFF${JSON.stringify({
+        enabled: true,
+        channel: "stable",
+        manifestUrl: "http://127.0.0.1/bom",
+        checkIntervalMinutes: 120,
+      })}`,
+      "utf8",
+    );
+    const cfg2 = loadOtaConfig(withBom);
+    assert.equal(cfg2.enabled, true);
+    assert.equal(cfg2.manifestUrl, "http://127.0.0.1/bom");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("downloadVerifiedFile accepts matching sha and rejects mismatch", async () => {

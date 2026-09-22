@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getProjectRoot, resolveProgramDataRoot } from "../paths.js";
+import { stripBom } from "./json-bom.js";
 import { otaConfigSchema, type OtaConfig } from "./ota-types.js";
 
 const DEFAULTS: OtaConfig = {
@@ -32,7 +33,7 @@ export function loadOtaConfig(env: NodeJS.ProcessEnv = process.env): OtaConfig {
     return { ...DEFAULTS };
   }
   try {
-    const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const raw = JSON.parse(stripBom(readFileSync(path, "utf8"))) as unknown;
     const parsed = otaConfigSchema.safeParse(raw);
     if (!parsed.success) {
       return { ...DEFAULTS };
