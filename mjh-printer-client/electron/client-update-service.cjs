@@ -2,7 +2,6 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
 const {
   SETUP_NAME,
   compareVersions,
@@ -14,12 +13,22 @@ const {
   writeJson,
   downloadVerifiedFile,
 } = require("./client-update-lib.cjs");
+const {
+  CLIENT_UPDATE_TASK_NAME,
+  ELEVATION_REQUIRED,
+  launchElevatedClientUpdateApply,
+} = require("./client-update-elevation.cjs");
 
 /**
  * @param {{
  *   app: import("electron").App,
  *   log: (msg: string) => void,
  *   resolveUpdaterScript?: () => string | null,
+ *   isElevated?: () => boolean,
+ *   tryScheduledTask?: () => boolean,
+ *   startDirect?: Function,
+ *   startUac?: Function,
+ *   programDataRoot?: string,
  * }} deps
  */
 function createClientUpdateService(deps) {
@@ -297,31 +306,63 @@ function createClientUpdateService(deps) {
       return { ok: false, error: "未找到 update-client.ps1" };
     }
 
-    log(`CLIENT OTA APPLY setup=${setupPath} script=${script}`);
-
-    const child = spawn(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        script,
-        "-SetupPath",
-        setupPath,
-      ],
-      {
-        detached: true,
-        stdio: "ignore",
-        windowsHide: true,
-      },
+    const newVersion = state.downloadedVersion;
+    log(
+      `CLIENT OTA APPLY setup=${setupPath} script=${script} old=${currentVersion} new=${newVersion}`,
     );
-    child.unref();
 
+    const launched = launchElevatedClientUpdateApply({
+      scriptPath: script,
+      setupPath,
+      oldVersion: currentVersion,
+      newVersion,
+      ...(typeof deps.isElevated === "function"
+        ? { elevated: deps.isElevated() }
+        : {}),
+      ...(typeof deps.tryScheduledTask === "function"
+        ? { tryScheduledTask: deps.tryScheduledTask }
+        : {}),
+      ...(typeof deps.startDirect === "function" ? { startDirect: deps.startDirect } : {}),
+      ...(typeof deps.startUac === "function" ? { startUac: deps.startUac } : {}),
+      ...(deps.programDataRoot ? { programDataRoot: deps.programDataRoot } : {}),
+    });
+
+    if (!launched.ok) {
+      log(`CLIENT OTA APPLY FAILED ${launched.error}`);
+      writeState({ lastError: (launched.error || "").slice(0, 240) });
+      return { ok: false, error: launched.error };
+    }
+
+    if (launched.mode === "direct") {
+      log(`CLIENT OTA APPLY mode=direct pid=${launched.pid ?? ""}`);
+      writeState({ lastError: null });
+      return {
+        ok: true,
+        message: "Update started, application will restart",
+        quitting: true,
+        mode: "direct",
+        pid: launched.pid ?? undefined,
+      };
+    }
+
+    const via =
+      launched.mode === "scheduled-task"
+        ? `计划任务 ${launched.taskName || CLIENT_UPDATE_TASK_NAME}`
+        : "UAC 提权";
+    log(`CLIENT OTA APPLY ELEVATION_REQUIRED via=${launched.mode}`);
+    writeState({
+      lastError: `ELEVATION_REQUIRED via ${launched.mode}`,
+    });
     return {
-      ok: true,
-      message: "已启动 Client 安装程序，应用即将退出",
+      ok: false,
+      code: ELEVATION_REQUIRED,
+      elevationStarted: true,
+      mode: launched.mode,
+      taskName: launched.taskName,
+      pid: launched.pid,
+      message: "Update started, application will restart",
       quitting: true,
+      error: `ELEVATION_REQUIRED：已通过${via}启动提权更新（未在本进程完成安装，禁止视为成功）。`,
     };
   }
 

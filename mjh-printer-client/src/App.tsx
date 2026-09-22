@@ -271,14 +271,23 @@ export function App() {
   }
 
   async function onApplyClientUpdate() {
-    setBusy("正在安装 Client 更新…");
+    setBusy("正在启动 Client 更新…");
     setToast(null);
     try {
       if (!window.mjhDesktop?.clientUpdateApply) {
         throw new Error("当前环境不支持 Client OTA");
       }
       const r = await window.mjhDesktop.clientUpdateApply();
-      setToast(r.ok ? r.message || "安装已启动" : r.error || "安装失败");
+      if (r.ok) {
+        setToast(r.message || "Update started, application will restart");
+      } else if (r.elevationStarted && r.code === "ELEVATION_REQUIRED") {
+        setToast(
+          r.message ||
+            "Update started, application will restart（已提权启动安装，请稍候）",
+        );
+      } else {
+        setToast(r.error || "安装失败");
+      }
     } catch (e) {
       setToast(e instanceof Error ? e.message : String(e));
     } finally {

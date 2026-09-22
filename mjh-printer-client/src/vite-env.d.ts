@@ -22,7 +22,12 @@ declare global {
     latestVersion?: string;
     message?: string;
     error?: string;
+    code?: string;
+    elevationStarted?: boolean;
     quitting?: boolean;
+    mode?: string;
+    taskName?: string;
+    pid?: number | null;
   };
 
   interface Window {

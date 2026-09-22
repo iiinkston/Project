@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "electron:dev": "concurrently -k -n vite,electron -c cyan,magenta \"vite\" \"wait-on http://127.0.0.1:5173 && node scripts/start-electron.mjs\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test electron/client-update-lib.test.cjs electron/stability-lib.test.cjs",
+    "test": "node --test electron/client-update-lib.test.cjs electron/client-update-elevation.test.cjs electron/stability-lib.test.cjs",
     "dist:win": "pnpm build && electron-builder --win --x64 --dir",
     "dist:setup": "pnpm build && node installer/stage-agent.mjs && electron-builder --win --x64",
     "dist:all": "pnpm dist:win && node installer/copy-client-artifact.mjs"
@@ -52,6 +52,14 @@
       {
         "from": "scripts/update-client.ps1",
         "to": "updater/update-client.ps1"
+      },
+      {
+        "from": "scripts/apply-client-update-helper.ps1",
+        "to": "updater/apply-client-update-helper.ps1"
+      },
+      {
+        "from": "scripts/register-client-ota-task.ps1",
+        "to": "updater/register-client-ota-task.ps1"
       },
       {
         "from": "config/client-update.json",

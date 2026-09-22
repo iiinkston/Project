@@ -1,0 +1,12 @@
+﻿{
+    "at":  "2026-09-22T14:44:11.1000433Z",
+    "client":  true,
+    "agent":  true,
+    "agentVersion":  "2.4.8",
+    "bound":  true,
+    "cloud":  false,
+    "printer":  true,
+    "clientLog":  "2026-09-22T14:43:51.539Z app start version=1.0.8 exec=C:\\Program Files\\MJH Printer\\MJH Printer Client.exe hwAccel=off singleInstance=yes",
+    "clientVersion":  "1.0.8",
+    "pass":  true
+}

@@ -1,0 +1,16 @@
+{
+  "at": "2026-09-22T14:38:59.679Z",
+  "isElevated": false,
+  "taskExistsRun": false,
+  "applyResult": {
+    "ok": false,
+    "code": "ELEVATION_REQUIRED",
+    "elevationStarted": true,
+    "mode": "uac-runas",
+    "pid": 28416,
+    "message": "Update started, application will restart",
+    "quitting": true,
+    "error": "ELEVATION_REQUIRED：已通过UAC 提权启动提权更新（未在本进程完成安装，禁止视为成功）。"
+  },
+  "expectedShape": true
+}

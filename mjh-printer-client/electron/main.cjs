@@ -361,11 +361,20 @@ app.whenReady().then(() => {
   ipcMain.handle("client:update:apply", async () => {
     if (!clientUpdate) throw new Error("client update service not ready");
     const result = await clientUpdate.apply();
-    if (result.ok && result.quitting) {
+    // Only quit after an update task/process was actually accepted.
+    // Non-elevated: ok=false + elevationStarted + quitting — not fake success.
+    const accepted =
+      (result.ok === true && result.quitting) ||
+      (result.elevationStarted === true && result.quitting);
+    if (accepted) {
+      logLine(
+        `CLIENT OTA APPLY accepted mode=${result.mode || "?"} quitting — installer owns restart`,
+      );
+      // Give schtasks/UAC a moment to attach before this process exits (not a success sleep).
       setTimeout(() => {
         app.isQuitting = true;
         app.quit();
-      }, 400);
+      }, 1500);
     }
     return result;
   });
