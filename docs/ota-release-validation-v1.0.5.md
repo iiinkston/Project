@@ -51,6 +51,7 @@ AGENT_UPDATE_SHA256=5783fe1d2928831ca973a5a680b0e47666a5405fa276a6acd8708fcb4951
 | Tag | `v1.0.5` |
 | Assets | `MJH-Printer-Setup.exe`, `MJH-Printer-Agent-v2.4.5.zip`, `release-metadata.json` |
 | URL | https://github.com/iiinkston/Project/releases/tag/v1.0.5 |
+| Assets verified | Setup + Agent zip + metadata uploaded; CI rebuild for this tag **cancelled** so SHA 与本地构建一致 |
 
 ---
 
