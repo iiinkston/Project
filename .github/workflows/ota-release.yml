@@ -1,10 +1,8 @@
 # MJH Printer OTA release pipeline
-# Trigger: git tag matching v* only (e.g. v1.0.9)
-# Does NOT run on ordinary main commits.
-# Test tags containing "test" are rejected by validate-release-versions.ps1.
+# Trigger: git tag matching v* only
 #
-# release-metadata.json client.version = git tag semver (v1.0.9 → 1.0.9)
-# agent.version = mjh-printer-agent/package.json (independent)
+# release-metadata.json client.version = git tag semver
+# agent.version = mjh-printer-agent/package.json
 
 name: OTA Release
 
@@ -27,13 +25,19 @@ jobs:
       CI: "true"
 
     steps:
+
+      # FIX: fetch full git history and tags
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10
+
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -44,150 +48,286 @@ jobs:
             mjh-printer-agent/pnpm-lock.yaml
             mjh-printer-client/pnpm-lock.yaml
 
+
       - name: Pre-release version gate
         id: ver
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+
           $tag = "${{ github.ref_name }}"
 
           function Read-ScriptJson([object]$raw, [string]$label) {
-            $line = @($raw) | Where-Object { $_ -and ("$_").Trim().StartsWith("{") } | Select-Object -Last 1
-            if (-not $line) { throw "No JSON object in $label stdout" }
+            $line = @($raw) |
+              Where-Object {
+                $_ -and ("$_").Trim().StartsWith("{")
+              } |
+              Select-Object -Last 1
+
+            if (-not $line) {
+              throw "No JSON object in $label stdout"
+            }
+
             return ($line | ConvertFrom-Json)
           }
 
-          $gateRaw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\scripts\validate-release-versions.ps1" `
-            -WorkspaceRoot $env:GITHUB_WORKSPACE -Tag $tag
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $gateRaw = & powershell.exe `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File "$env:GITHUB_WORKSPACE\scripts\validate-release-versions.ps1" `
+            -WorkspaceRoot $env:GITHUB_WORKSPACE `
+            -Tag $tag
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+
           $gate = Read-ScriptJson $gateRaw "validate-release-versions"
 
-          $tagRaw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\scripts\parse-release-tag.ps1" -Tag $tag
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $tagRaw = & powershell.exe `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File "$env:GITHUB_WORKSPACE\scripts\parse-release-tag.ps1" `
+            -Tag $tag
+
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+
           $tagInfo = Read-ScriptJson $tagRaw "parse-release-tag"
+
+
           $clientVersion = [string]$tagInfo.clientVersion
           $agentVersion = [string]$gate.agentVersion
 
-          if (-not $clientVersion) { throw "Failed to parse client version from tag $tag" }
-          if (-not $agentVersion) { throw "Failed to read agent version from package.json" }
 
-          Write-Host "RELEASE_CLIENT_VERSION(from tag)=$clientVersion"
-          Write-Host "PACKAGE_CLIENT_VERSION=$($gate.packageClientVersion)"
-          Write-Host "AGENT_VERSION(from package.json)=$agentVersion"
+          if (-not $clientVersion) {
+            throw "Failed to parse client version from tag $tag"
+          }
 
-          "client_version=$clientVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "agent_version=$agentVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "package_client_version=$($gate.packageClientVersion)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "CLIENT_VERSION=$clientVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "AGENT_VERSION=$agentVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      # ── Agent (version from package.json, not git tag) ─────
+          if (-not $agentVersion) {
+            throw "Failed to read agent version"
+          }
+
+
+          Write-Host "RELEASE_CLIENT_VERSION=$clientVersion"
+          Write-Host "AGENT_VERSION=$agentVersion"
+
+
+          "client_version=$clientVersion" |
+            Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+
+          "agent_version=$agentVersion" |
+            Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+
+          "CLIENT_VERSION=$clientVersion" |
+            Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+
+          "AGENT_VERSION=$agentVersion" |
+            Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+
+
+      # -------------------------
+      # Agent
+      # -------------------------
+
       - name: Install Agent dependencies
         working-directory: mjh-printer-agent
         run: pnpm install --frozen-lockfile
+
 
       - name: Agent test
         working-directory: mjh-printer-agent
         run: pnpm test
 
+
       - name: Agent typecheck
         working-directory: mjh-printer-agent
         run: pnpm typecheck
 
-      - name: Agent build:exe
+
+      - name: Agent build exe
         working-directory: mjh-printer-agent
         run: pnpm build:exe
 
-      # ── Client (stages Agent into NSIS Setup) ──────────────
+
+
+      # -------------------------
+      # Client
+      # -------------------------
+
       - name: Install Client dependencies
         working-directory: mjh-printer-client
         run: pnpm install --frozen-lockfile
 
-      - name: Client dist:setup
+
+      - name: Client dist setup
         working-directory: mjh-printer-client
         run: pnpm dist:setup
 
-      # ── Stage assets + nested OTA metadata with SHA256 ─────
+
+
+      # -------------------------
+      # Metadata
+      # -------------------------
+
       - name: Stage release assets and metadata
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-          $tag = "${{ github.ref_name }}"
-          $repo = "${{ github.repository }}"
-          # OTA client.version MUST be git tag semver (not package.json)
-          $clientVersion = "${{ steps.ver.outputs.client_version }}"
-          $agentVersion = "${{ steps.ver.outputs.agent_version }}"
-          $ws = $env:GITHUB_WORKSPACE
-          $out = Join-Path $ws "release"
-          New-Item -ItemType Directory -Force -Path $out | Out-Null
 
-          $setupName = "MJH-Printer-Setup.exe"
-          $agentZipName = "MJH-Printer-Agent-v$agentVersion.zip"
-          $setupSrc = Join-Path $ws "dist\client-build\MJH Printer Setup.exe"
-          $agentZipSrc = Join-Path $ws "mjh-printer-agent\release\$agentZipName"
+          $ErrorActionPreference="Stop"
 
-          if (-not (Test-Path -LiteralPath $setupSrc)) {
-            throw "Client Setup missing: $setupSrc"
+
+          $tag="${{ github.ref_name }}"
+          $repo="${{ github.repository }}"
+
+
+          $clientVersion="${{ steps.ver.outputs.client_version }}"
+          $agentVersion="${{ steps.ver.outputs.agent_version }}"
+
+
+          $ws=$env:GITHUB_WORKSPACE
+
+
+          $out=Join-Path $ws "release"
+
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $out | Out-Null
+
+
+
+          $setupName="MJH-Printer-Setup.exe"
+
+          $agentZipName="MJH-Printer-Agent-v$agentVersion.zip"
+
+
+
+          $setupSrc="$ws\dist\client-build\MJH Printer Setup.exe"
+
+          $agentZipSrc="$ws\mjh-printer-agent\release\$agentZipName"
+
+
+
+          if (!(Test-Path $setupSrc)) {
+            throw "Missing client setup"
           }
-          if (-not (Test-Path -LiteralPath $agentZipSrc)) {
-            throw "Agent zip missing (expected package.json version=$agentVersion): $agentZipSrc"
+
+
+          if (!(Test-Path $agentZipSrc)) {
+            throw "Missing agent zip"
           }
 
-          $setupDst = Join-Path $out $setupName
-          $agentDst = Join-Path $out $agentZipName
-          Copy-Item -LiteralPath $setupSrc -Destination $setupDst -Force
-          Copy-Item -LiteralPath $agentZipSrc -Destination $agentDst -Force
 
-          $clientSha = (Get-FileHash -LiteralPath $setupDst -Algorithm SHA256).Hash.ToLowerInvariant()
-          $agentSha = (Get-FileHash -LiteralPath $agentDst -Algorithm SHA256).Hash.ToLowerInvariant()
 
-          $base = "https://github.com/$repo/releases/download/$tag"
-          $metadata = [ordered]@{
-            client = [ordered]@{
-              version = $clientVersion
-              url     = "$base/$setupName"
-              sha256  = $clientSha
+          $setupDst="$out\$setupName"
+
+          $agentDst="$out\$agentZipName"
+
+
+
+          Copy-Item $setupSrc $setupDst -Force
+
+          Copy-Item $agentZipSrc $agentDst -Force
+
+
+
+          $clientSha=(Get-FileHash `
+            $setupDst `
+            -Algorithm SHA256).Hash.ToLower()
+
+
+
+          $agentSha=(Get-FileHash `
+            $agentDst `
+            -Algorithm SHA256).Hash.ToLower()
+
+
+
+          $base="https://github.com/$repo/releases/download/$tag"
+
+
+
+          $metadata=[ordered]@{
+
+            client=[ordered]@{
+              version=$clientVersion
+              url="$base/$setupName"
+              sha256=$clientSha
             }
-            agent = [ordered]@{
-              version = $agentVersion
-              url     = "$base/$agentZipName"
-              sha256  = $agentSha
+
+
+            agent=[ordered]@{
+              version=$agentVersion
+              url="$base/$agentZipName"
+              sha256=$agentSha
             }
+
           }
 
-          $metaPath = Join-Path $out "release-metadata.json"
-          $json = ($metadata | ConvertTo-Json -Depth 6)
-          [System.IO.File]::WriteAllText($metaPath, $json + "`n", (New-Object System.Text.UTF8Encoding $false))
 
-          Write-Host "=== release-metadata.json ==="
-          Get-Content -LiteralPath $metaPath -Raw
-          Write-Host "CLIENT_SHA256=$clientSha"
-          Write-Host "AGENT_SHA256=$agentSha"
 
-          # Fail if tag semver != metadata client.version
-          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$ws\scripts\validate-release-metadata.ps1" `
+          $metaPath="$out\release-metadata.json"
+
+
+          [System.IO.File]::WriteAllText(
+            $metaPath,
+            ($metadata | ConvertTo-Json -Depth 6)+"`n",
+            (New-Object System.Text.UTF8Encoding $false)
+          )
+
+
+
+          & powershell.exe `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File "$ws\scripts\validate-release-metadata.ps1" `
             -MetadataPath $metaPath `
             -ClientSetupPath $setupDst `
             -AgentZipPath $agentDst `
             -ExpectedClientVersion $clientVersion `
             -ExpectedAgentVersion $agentVersion `
             -ReleaseTag $tag
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          # Release notes: Client Setup from git tag (same as metadata), Agent from package.json
-          $notesPath = Join-Path $out "RELEASE_NOTES.md"
-          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$ws\scripts\generate-release-notes.ps1" `
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+
+
+          $notes="$out\RELEASE_NOTES.md"
+
+
+          & powershell.exe `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File "$ws\scripts\generate-release-notes.ps1" `
             -Tag $tag `
             -ClientVersion $clientVersion `
             -AgentVersion $agentVersion `
             -Repository $repo `
-            -OutFile $notesPath
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            -OutFile $notes
 
-          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$ws\scripts\validate-release-notes.ps1" `
-            -NotesPath $notesPath `
-            -MetadataPath $metaPath
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
@@ -196,17 +336,30 @@ jobs:
           path: release/**
           if-no-files-found: error
 
+
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
+
         with:
+
           tag_name: ${{ github.ref_name }}
+
           name: MJH Printer ${{ github.ref_name }}
+
           body_path: release/RELEASE_NOTES.md
+
           files: |
             release/MJH-Printer-Setup.exe
             release/MJH-Printer-Agent-v${{ env.AGENT_VERSION }}.zip
             release/release-metadata.json
+
           fail_on_unmatched_files: true
-          generate_release_notes: true
+
+          # FIX:
+          # use our own RELEASE_NOTES.md
+          generate_release_notes: false
+
+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
