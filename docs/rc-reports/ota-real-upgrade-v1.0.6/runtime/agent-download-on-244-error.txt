@@ -1,0 +1,9 @@
+Invoke-RestMethod : 远程服务器返回错误: (400) 错误的请求。
+所在位置 C:\Users\XU MING WEI\AppData\Local\Temp\ps-script-67ea8530-b92d-48ac-859b-be0753098779.ps1:148 字符: 9
++   $dl = Invoke-RestMethod -Method POST "http://127.0.0.1:17890/local/ ...
++         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (System.Net.HttpWebRequest:HttpWebRequest) [Invoke-RestMethod]，WebExce 
+   ption
+    + FullyQualifiedErrorId : WebCmdletWebResponseException,Microsoft.PowerShell.Commands.InvokeRestMethodCommand
+ 
+

@@ -1,0 +1,12 @@
+﻿{
+    "clientVersion":  "1.0.6",
+    "agentVersion":  "2.4.6",
+    "clientSha256":  "503d0aad40758f957dea7bada485b46a4ae73fc81e5a5602b3263ad0427495a1",
+    "agentSha256":  "ee34c649f1a2427be25140d316cfda3283479526824b890edcd6320e91897c8d",
+    "tag":  "v1.0.6-test",
+    "assets":  {
+                   "clientSetup":  "MJH-Printer-Setup.exe",
+                   "agentZip":  "MJH-Printer-Agent-v2.4.6.zip"
+               },
+    "publishedAt":  "2026-09-22T07:03:26.7557266Z"
+}
