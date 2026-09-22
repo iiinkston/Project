@@ -1,0 +1,26 @@
+{
+  "completed": {
+    "rc-job-kitchen-only": {
+      "kitchenSentAt": "2026-09-19T07:19:58.5317425Z",
+      "acknowledged": false
+    },
+    "cmu8ugehz000lpj01m0a72ftd": {
+      "kitchenSentAt": "2026-09-19T20:32:43.164Z",
+      "cashierSentAt": "2026-09-19T20:32:43.585Z",
+      "printedAt": "2026-09-19T20:32:43.602Z",
+      "acknowledged": true
+    },
+    "cmu9gdanc000nl901kki4fyx5": {
+      "kitchenSentAt": "2026-09-20T06:46:10.436Z",
+      "cashierSentAt": "2026-09-20T06:46:10.850Z",
+      "printedAt": "2026-09-20T06:46:10.870Z",
+      "acknowledged": true
+    },
+    "cmuazbv85001al901vq23nei2": {
+      "kitchenSentAt": "2026-09-21T08:24:45.549Z",
+      "cashierSentAt": "2026-09-21T08:24:45.984Z",
+      "printedAt": "2026-09-21T08:24:46.004Z",
+      "acknowledged": true
+    }
+  }
+}

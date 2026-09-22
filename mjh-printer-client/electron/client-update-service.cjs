@@ -26,12 +26,23 @@ function createClientUpdateService(deps) {
   const { app, log } = deps;
   let downloadInFlight = null;
 
+  function localAppDataRoot() {
+    // Electron has no app.getPath("localAppData"); use env / appData parent.
+    const fromEnv = process.env.LOCALAPPDATA;
+    if (fromEnv && fromEnv.trim()) return fromEnv.trim();
+    try {
+      return path.join(app.getPath("appData"), "..", "Local");
+    } catch {
+      return path.join(app.getPath("userData"), "..");
+    }
+  }
+
   function updatesDir() {
-    return path.join(app.getPath("localAppData"), "MJH Printer Client", "updates");
+    return path.join(localAppDataRoot(), "MJH Printer Client", "updates");
   }
 
   function configPath() {
-    return path.join(app.getPath("localAppData"), "MJH Printer Client", "config", "update.json");
+    return path.join(localAppDataRoot(), "MJH Printer Client", "config", "update.json");
   }
 
   function statePath() {

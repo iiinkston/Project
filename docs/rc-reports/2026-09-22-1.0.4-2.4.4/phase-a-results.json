@@ -1,0 +1,21 @@
+﻿{
+    "agent_exe_exists":  true,
+    "agent_version_out":  "MJH Printer Agent\r\nVersion: 2.4.4\r\nBuild: 2026-09-22T03:50:08Z\r\nPlatform: win32-x64",
+    "agent_version_244":  true,
+    "task_exists":  false,
+    "task_state":  "找不到任何“TaskName”属性等于“MJH Printer Agent”的 MSFT_ScheduledTask 对象。请验证属性值，然后重试。",
+    "local_api_17890":  true,
+    "status_raw":  "{\"version\":\"2.4.4\",\"build\":\"2026-09-22T03:50:08Z\",\"running\":true,\"pid\":24996,\"startedAt\":\"2026-09-22T03:53:42.756Z\",\"updatedAt\":\"2026-09-22T03:54:42.071Z\",\"lastSyncAt\":\"2026-09-22T03:54:41.707Z\",\"bound\":true,\"lifecycle\":\"RUNNING\",\"storeName\":\"Man Jiang Hong\",\"cloud\":{\"online\":true},\"printer\":{\"model\":\"XP-N160II\",\"ip\":\"192.168.0.110\",\"port\":9100,\"online\":true},\"queue\":{\"pending\":0},\"worker\":{\"lastPollAt\":\"2026-09-22T03:54:41.707Z\",\"lastClaimAt\":null,\"lastPrintAt\":null,\"lastError\":null}}",
+    "client_exe_exists":  true,
+    "client_file_version":  "34.5.8",
+    "client_file_version_104":  false,
+    "client_running":  true,
+    "client_window":  true,
+    "screenshot_01":  "D:\\Project\\docs\\rc-reports\\2026-09-22-1.0.4-2.4.4\\01-client-after-install.png",
+    "programdata_config_kept":  true,
+    "keep_bound":  true,
+    "keep_cloud":  true,
+    "keep_printer":  true,
+    "keep_version":  "2.4.4",
+    "keep_lifecycle":  "RUNNING"
+}

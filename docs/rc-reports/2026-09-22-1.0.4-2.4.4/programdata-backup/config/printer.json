@@ -1,0 +1,22 @@
+{
+  "store": {
+    "id": "cmu9a11jd0000pjsv37nzv9yj",
+    "name": "Man Jiang Hong"
+  },
+  "agent": {
+    "id": "kitchen-1",
+    "token": "2YVb4MxjsK0kz3z2uMlOXOsXEqrALO8Oy-ATdy8o-J0",
+    "pollIntervalMs": 3000
+  },
+  "printer": {
+    "name": "Kitchen",
+    "model": "XP-N160II",
+    "ip": "192.168.0.110",
+    "port": 9100,
+    "encoding": "gb18030",
+    "connectTimeoutMs": 3000
+  },
+  "cloud": {
+    "baseUrl": "http://206.189.80.83/api/v1"
+  }
+}

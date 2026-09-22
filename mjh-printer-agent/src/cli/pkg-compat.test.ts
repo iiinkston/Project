@@ -82,7 +82,8 @@ test("agent:start creates lock; agent:stop removes lock", async () => {
     assert.equal(onDisk?.pid, process.pid);
     const raw = await readFile(lockPath, "utf8");
     assert.ok(raw.includes('"pid"'));
-    assert.ok(raw.includes('"startedAt"'));
+    assert.ok(raw.includes('"exePath"'));
+    assert.ok(raw.includes('"createdAt"'));
     assert.ok(raw.includes('"version"'));
 
     await lock.release();

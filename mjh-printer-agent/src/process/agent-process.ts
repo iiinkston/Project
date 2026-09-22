@@ -1,9 +1,84 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { join } from "node:path";
 import { resolveRuntimePaths } from "../paths.js";
 
 export const AGENT_PROCESS_ENV = "MJH_PRINTER_AGENT_PROCESS";
 export const AGENT_PROCESS_FLAG = "--agent-process";
+export const AGENT_EXE_BASENAME = "MJH-Printer-Agent.exe";
+
+/** Default install path: `%ProgramW6432%\MJH Printer Agent\MJH-Printer-Agent.exe` */
+export function resolveInstalledAgentExePath(env: NodeJS.ProcessEnv = process.env): string {
+  const root = (env.ProgramW6432?.trim() || env.ProgramFiles?.trim() || "C:\\Program Files").replace(
+    /[\\/]+$/,
+    "",
+  );
+  return join(root, "MJH Printer Agent", AGENT_EXE_BASENAME);
+}
+
+export function normalizeExecutablePath(p: string): string {
+  return p.trim().replace(/\//g, "\\").toLowerCase();
+}
+
+/**
+ * True when `exePath` is the MJH Printer Agent binary
+ * (installed Program Files path, or the same EXE as the current process).
+ */
+export function isMjhAgentExecutablePath(
+  exePath: string | null | undefined,
+  options?: { currentExePath?: string; env?: NodeJS.ProcessEnv },
+): boolean {
+  if (!exePath?.trim()) return false;
+  const normalized = normalizeExecutablePath(exePath);
+  const basenameOk =
+    normalized.endsWith(`\\${AGENT_EXE_BASENAME.toLowerCase()}`) ||
+    normalized === AGENT_EXE_BASENAME.toLowerCase();
+  if (!basenameOk) return false;
+
+  const expected = normalizeExecutablePath(resolveInstalledAgentExePath(options?.env));
+  if (normalized === expected) return true;
+
+  const current = options?.currentExePath?.trim();
+  if (current) {
+    const currentNorm = normalizeExecutablePath(current);
+    if (
+      normalized === currentNorm &&
+      currentNorm.endsWith(`\\${AGENT_EXE_BASENAME.toLowerCase()}`)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Resolve the absolute executable path for a live PID (Windows WMI / Linux /proc). */
+export function getProcessExecutablePath(pid: number): string | null {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+
+  if (process.platform === "win32") {
+    try {
+      const out = execFileSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-Command",
+          `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").ExecutablePath`,
+        ],
+        { encoding: "utf8", windowsHide: true, timeout: 8_000 },
+      );
+      const path = out.trim().replace(/^"|"$/g, "");
+      return path.length > 0 ? path : null;
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    return realpathSync(`/proc/${pid}/exe`);
+  } catch {
+    return null;
+  }
+}
 
 export type ProcessInfo = {
   pid: number;
@@ -96,12 +171,20 @@ export function findRunningAgentPids(): number[] {
     .filter((p) => p.isMjhAgent)
     .map((p) => p.pid);
 
-  // agent.lock is only written by agent:start — trust live lock PID even if WMI cmdline is empty.
+  // agent.lock: only trust PID when the live process EXE is MJH-Printer-Agent.exe
+  // (avoids Windows PID reuse → NVIDIA / other processes).
   const lockPath = resolveRuntimePaths().lockPath;
   if (existsSync(lockPath)) {
     try {
       const lock = JSON.parse(readFileSync(lockPath, "utf8")) as { pid?: number };
-      if (typeof lock.pid === "number" && isPidAlive(lock.pid) && !fromProcs.includes(lock.pid)) {
+      if (
+        typeof lock.pid === "number" &&
+        isPidAlive(lock.pid) &&
+        !fromProcs.includes(lock.pid) &&
+        isMjhAgentExecutablePath(getProcessExecutablePath(lock.pid), {
+          currentExePath: process.execPath,
+        })
+      ) {
         fromProcs.push(lock.pid);
       }
     } catch {
@@ -152,10 +235,14 @@ export function isMjhAgentPid(pid: number): boolean {
   if (process.platform !== "win32") {
     return true;
   }
+  const exe = getProcessExecutablePath(pid);
+  if (isMjhAgentExecutablePath(exe, { currentExePath: process.execPath })) {
+    return true;
+  }
   const procs = listRelevantProcesses();
   const hit = procs.find((p) => p.pid === pid);
   if (hit) return hit.isMjhAgent;
-  // Without command line, do not assume EXE name alone is the agent worker.
+  // Without a matching EXE path / command line, do not assume the PID is our agent.
   return false;
 }
 

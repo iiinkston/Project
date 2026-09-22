@@ -2,14 +2,35 @@ const { app, BrowserWindow, shell, Tray, Menu, nativeImage, ipcMain } = require(
 const path = require("node:path");
 const fs = require("node:fs");
 const { createClientUpdateService } = require("./client-update-service.cjs");
+const {
+  formatAppStartLog,
+  formatRendererCrashLog,
+  formatRendererRecoveryLog,
+  formatSecondInstanceLog,
+  planRendererRecovery,
+} = require("./stability-lib.cjs");
 
 /** Fallback tiny 16×16 green circle PNG (base64). */
 const TRAY_ICON_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAALUlEQVR4nGNgGJRAPj/6PzZMtkaiDaLIAGI14zRk1AAqGDBw6YAYgwhqHBAAAKU57GEi2ZsrAAAAAElFTkSuQmCC";
 
+// Restaurant PCs: GPU drivers / RDP often crash Chromium GPU → blank window.
+try {
+  app.disableHardwareAcceleration();
+} catch {
+  // ignore
+}
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
 let mainWindow = null;
 let tray = null;
 let clientUpdate = null;
+let pendingShowFromSecondInstance = false;
+let rendererRecoveryState = { recoveryCount: 0 };
 app.isQuitting = false;
 
 function clientLogDir() {
@@ -61,7 +82,7 @@ function loadTrayIcon() {
 }
 
 function showMainWindow() {
-  if (!mainWindow) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
     createWindow();
     return;
   }
@@ -71,7 +92,7 @@ function showMainWindow() {
 }
 
 function toggleMainWindow() {
-  if (!mainWindow) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
     createWindow();
     return;
   }
@@ -118,7 +139,8 @@ async function trayCheckUpdate() {
 
 function createTray() {
   const icon = loadTrayIcon();
-  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
+  // Never use createEmpty() — empty Tray can crash Electron on some Windows GPUs.
+  tray = new Tray(icon.isEmpty() ? nativeImage.createFromDataURL(TRAY_ICON_DATA_URL) : icon);
   tray.setToolTip("满江红打印助手");
 
   const contextMenu = Menu.buildFromTemplate([
@@ -185,7 +207,40 @@ function createWindow() {
   });
 
   mainWindow.webContents.on("render-process-gone", (_e, details) => {
-    logLine(`render-process-gone reason=${details.reason} exit=${details.exitCode}`);
+    const plan = planRendererRecovery(rendererRecoveryState, {
+      isQuitting: Boolean(app.isQuitting),
+      windowAlive: Boolean(mainWindow && !mainWindow.isDestroyed()),
+    });
+    rendererRecoveryState = {
+      recoveryCount: plan.recoveryCount,
+      lastRecoveryAt: plan.lastRecoveryAt,
+    };
+
+    logLine(
+      formatRendererCrashLog({
+        reason: details.reason,
+        exitCode: details.exitCode,
+        recoveryCount: plan.recoveryCount,
+        version: app.getVersion(),
+      }),
+    );
+
+    if (!plan.shouldReload) return;
+
+    setTimeout(() => {
+      if (app.isQuitting || !mainWindow || mainWindow.isDestroyed()) return;
+      logLine(
+        formatRendererRecoveryLog({
+          recoveryCount: rendererRecoveryState.recoveryCount,
+          version: app.getVersion(),
+        }),
+      );
+      try {
+        mainWindow.webContents.reloadIgnoringCache();
+      } catch (err) {
+        logLine(`renderer recovery reload failed ${err}`);
+      }
+    }, 500);
   });
 
   mainWindow.webContents.on("console-message", (_e, level, message, line, sourceId) => {
@@ -222,8 +277,30 @@ function configureAutoLaunch() {
   }
 }
 
+if (gotSingleInstanceLock) {
+  app.on("second-instance", () => {
+    logLine(formatSecondInstanceLog({ version: app.getVersion() }));
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      pendingShowFromSecondInstance = true;
+      return;
+    }
+    showMainWindow();
+  });
+}
+
 app.whenReady().then(() => {
+  if (!gotSingleInstanceLock) return;
+
+  logLine(
+    formatAppStartLog({
+      version: app.getVersion(),
+      execPath: process.execPath,
+      hardwareAcceleration: false,
+      singleInstance: true,
+    }),
+  );
   logLine(`app ready version=${app.getVersion()} exec=${process.execPath}`);
+
   configureAutoLaunch();
   clientUpdate = createClientUpdateService({ app, log: logLine });
   // Seed default Client OTA config once (disabled until manifestUrl is set).
@@ -260,6 +337,10 @@ app.whenReady().then(() => {
   const startInTray = process.argv.includes("--tray");
   if (startInTray && mainWindow) {
     mainWindow.hide();
+  }
+  if (pendingShowFromSecondInstance) {
+    pendingShowFromSecondInstance = false;
+    showMainWindow();
   }
   ipcMain.on("mjh:show-window", () => showMainWindow());
   ipcMain.handle("mjh:get-version", () => app.getVersion());

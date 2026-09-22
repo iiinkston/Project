@@ -1,16 +1,28 @@
 import { mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { isMjhAgentPid, isPidAlive, listRelevantProcesses } from "../process/agent-process.js";
-
-function isClassifiedForeignProcess(pid: number): boolean {
-  const hit = listRelevantProcesses().find((p) => p.pid === pid);
-  return Boolean(hit && !hit.isMjhAgent);
-}
+import {
+  getProcessExecutablePath,
+  isMjhAgentExecutablePath,
+  isPidAlive,
+  resolveInstalledAgentExePath,
+} from "../process/agent-process.js";
 
 export type AgentLockInfo = {
   pid: number;
-  startedAt: string;
+  /** Absolute path of the agent EXE that owns this lock. */
+  exePath: string;
+  /** ISO timestamp when the lock was created. */
+  createdAt: string;
   version: string;
+};
+
+/** Injectable probes — tests mock PID reuse / foreign owners without real OS processes. */
+export type AgentLockDeps = {
+  isPidAlive?: (pid: number) => boolean;
+  getExecutablePath?: (pid: number) => string | null;
+  currentPid?: () => number;
+  currentExePath?: () => string;
+  nowIso?: () => string;
 };
 
 export class AgentAlreadyRunningError extends Error {
@@ -26,13 +38,20 @@ export class AgentAlreadyRunningError extends Error {
 export async function readAgentLock(filePath: string): Promise<AgentLockInfo | null> {
   try {
     const raw = await readFile(filePath, "utf8");
-    const parsed = JSON.parse(raw) as Partial<AgentLockInfo>;
+    const parsed = JSON.parse(raw) as Partial<AgentLockInfo> & { startedAt?: string };
     if (typeof parsed.pid !== "number" || !Number.isInteger(parsed.pid) || parsed.pid <= 0) {
       return null;
     }
+    const createdAt =
+      typeof parsed.createdAt === "string" && parsed.createdAt.trim()
+        ? parsed.createdAt.trim()
+        : typeof parsed.startedAt === "string"
+          ? parsed.startedAt
+          : "";
     return {
       pid: parsed.pid,
-      startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : "",
+      exePath: typeof parsed.exePath === "string" ? parsed.exePath.trim() : "",
+      createdAt,
       version: typeof parsed.version === "string" ? parsed.version : "",
     };
   } catch {
@@ -41,23 +60,65 @@ export async function readAgentLock(filePath: string): Promise<AgentLockInfo | n
 }
 
 /**
+ * True when a live PID is the MJH Printer Agent EXE
+ * (`…\MJH Printer Agent\MJH-Printer-Agent.exe`), not a reused PID.
+ */
+export function isLiveMjhAgentOwner(
+  pid: number,
+  deps: AgentLockDeps = {},
+): boolean {
+  const alive = deps.isPidAlive ?? isPidAlive;
+  const getExe = deps.getExecutablePath ?? getProcessExecutablePath;
+  const currentPid = deps.currentPid?.() ?? process.pid;
+  const currentExe =
+    deps.currentExePath?.() ??
+    (process.platform === "win32" ? process.execPath : resolveInstalledAgentExePath());
+
+  if (pid === currentPid) {
+    return true;
+  }
+  if (!alive(pid)) {
+    return false;
+  }
+  const liveExe = getExe(pid);
+  return isMjhAgentExecutablePath(liveExe, { currentExePath: currentExe });
+}
+
+/**
  * Atomically acquire a single-instance lock using O_EXCL create.
- * Stale / unreadable / ACL-blocked locks are cleared when no live agent exists.
+ *
+ * Stale locks are auto-cleared when:
+ * - PID is dead
+ * - PID is alive but executable is NOT MJH-Printer-Agent.exe (Windows PID reuse)
+ * - lock JSON is corrupt / legacy-unreadable
+ *
+ * Never requires a human to delete agent.lock.
  */
 export class AgentLock {
   private held = false;
+  private readonly deps: AgentLockDeps;
 
   constructor(
     private readonly filePath: string,
     private readonly version: string,
-  ) {}
+    deps: AgentLockDeps = {},
+  ) {
+    this.deps = deps;
+  }
 
   async acquire(): Promise<AgentLockInfo> {
     await mkdir(dirname(this.filePath), { recursive: true });
 
+    const currentPid = this.deps.currentPid?.() ?? process.pid;
+    const exePath =
+      this.deps.currentExePath?.() ??
+      (process.platform === "win32" ? process.execPath : resolveInstalledAgentExePath());
+    const createdAt = this.deps.nowIso?.() ?? new Date().toISOString();
+
     const info: AgentLockInfo = {
-      pid: process.pid,
-      startedAt: new Date().toISOString(),
+      pid: currentPid,
+      exePath,
+      createdAt,
       version: this.version,
     };
 
@@ -77,14 +138,11 @@ export class AgentLock {
     }
 
     const existing = await readAgentLock(this.filePath);
-    if (existing && isPidAlive(existing.pid)) {
-      const foreign = isClassifiedForeignProcess(existing.pid);
-      if (existing.pid === process.pid || isMjhAgentPid(existing.pid) || !foreign) {
-        throw new AgentAlreadyRunningError(existing.pid);
-      }
+    if (existing && isLiveMjhAgentOwner(existing.pid, this.deps)) {
+      throw new AgentAlreadyRunningError(existing.pid);
     }
 
-    // No live owner for this lock file — force-clear stale/unreadable lock.
+    // Stale: dead PID, foreign PID reuse, corrupt/legacy without live agent — cleanup.
     await this.forceClear();
 
     try {
@@ -113,9 +171,10 @@ export class AgentLock {
     }
 
     this.held = false;
+    const currentPid = this.deps.currentPid?.() ?? process.pid;
     try {
       const current = await readAgentLock(this.filePath);
-      if (current && current.pid !== process.pid) {
+      if (current && current.pid !== currentPid) {
         return;
       }
       await unlink(this.filePath);

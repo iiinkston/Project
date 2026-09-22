@@ -1,6 +1,6 @@
 {
   "name": "mjh-printer-client",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "description": "满江红打印助手 — Windows GUI Control Plane for MJH Printer Agent",
   "author": "满江红",
@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "electron:dev": "concurrently -k -n vite,electron -c cyan,magenta \"vite\" \"wait-on http://127.0.0.1:5173 && node scripts/start-electron.mjs\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test electron/client-update-lib.test.cjs",
+    "test": "node --test electron/client-update-lib.test.cjs electron/stability-lib.test.cjs",
     "dist:win": "pnpm build && electron-builder --win --x64 --dir",
     "dist:setup": "pnpm build && node installer/stage-agent.mjs && electron-builder --win --x64",
     "dist:all": "pnpm dist:win && node installer/copy-client-artifact.mjs"
@@ -35,9 +35,9 @@
   "build": {
     "appId": "com.manjianghong.printer-client",
     "productName": "MJH Printer Client",
-    "buildVersion": "1.0.3",
+    "buildVersion": "1.0.4",
     "extraMetadata": {
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     "directories": {
       "output": "../dist/client-build"
