@@ -79,7 +79,7 @@ if ($Tag) {
   $tagClientVersion = [string]$parsed.clientVersion
   Assert-Semver "git tag client version" $tagClientVersion
   if ($tagClientVersion -ne $packageClientVersion) {
-    Write-Diag "WARNING: TAG_PKG_DRIFT: tag client=$tagClientVersion package.json client=$packageClientVersion — release-metadata uses TAG; ensure app.getVersion / package.json are bumped when intended."
+    Write-Diag "WARNING: TAG_PKG_DRIFT: tag client=$tagClientVersion package.json client=$packageClientVersion - release-metadata uses TAG; ensure app.getVersion / package.json are bumped when intended."
   }
 }
 
