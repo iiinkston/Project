@@ -1,6 +1,7 @@
 # MJH Printer OTA release pipeline
-# Trigger: git tag matching v* only (e.g. v1.0.8, v-test-release)
+# Trigger: git tag matching v* only (e.g. v1.0.8)
 # Does NOT run on ordinary main commits.
+# Test tags containing "test" are rejected by validate-release-versions.ps1.
 #
 # Builds Client + Agent on windows-latest, computes SHA256 of final assets,
 # writes nested release-metadata.json (Cloud OTA contract), creates GitHub Release.
@@ -43,11 +44,14 @@ jobs:
             mjh-printer-agent/pnpm-lock.yaml
             mjh-printer-client/pnpm-lock.yaml
 
-      - name: Read package versions
+      - name: Pre-release version gate
         id: ver
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          $tag = "${{ github.ref_name }}"
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\scripts\validate-release-versions.ps1" `
+            -WorkspaceRoot $env:GITHUB_WORKSPACE -Tag $tag
           $raw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\scripts\get-version.ps1" -WorkspaceRoot $env:GITHUB_WORKSPACE
           Write-Host "versions=$raw"
           $v = $raw | ConvertFrom-Json
@@ -130,7 +134,6 @@ jobs:
           }
 
           $metaPath = Join-Path $out "release-metadata.json"
-          # UTF-8 without BOM — Cloud / Agent JSON parsers
           $json = ($metadata | ConvertTo-Json -Depth 6)
           [System.IO.File]::WriteAllText($metaPath, $json + "`n", (New-Object System.Text.UTF8Encoding $false))
 
@@ -138,7 +141,13 @@ jobs:
           Get-Content -LiteralPath $metaPath -Raw
           Write-Host "CLIENT_SHA256=$clientSha"
           Write-Host "AGENT_SHA256=$agentSha"
-          Write-Host "Staged: $setupName , $agentZipName , release-metadata.json"
+
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$ws\scripts\validate-release-metadata.ps1" `
+            -MetadataPath $metaPath `
+            -ClientSetupPath $setupDst `
+            -AgentZipPath $agentDst `
+            -ExpectedClientVersion $clientVersion `
+            -ExpectedAgentVersion $agentVersion
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
@@ -165,8 +174,8 @@ jobs:
             - `MJH-Printer-Agent-v${{ env.AGENT_VERSION }}.zip`
             - `release-metadata.json` (nested `{ client, agent }` + SHA256)
 
-            Point Cloud `REMOTE_MANIFEST_URL` at the `release-metadata.json` download URL
-            (or host a copy) so `GET /v1/printer/update/latest` serves this release.
+            Cloud `REMOTE_MANIFEST_URL`:
+            `https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/release-metadata.json`
           files: |
             release/MJH-Printer-Setup.exe
             release/MJH-Printer-Agent-v${{ env.AGENT_VERSION }}.zip

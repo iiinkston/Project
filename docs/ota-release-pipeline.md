@@ -96,6 +96,36 @@ pwsh -File scripts/get-version.ps1
 
 Avoids hardcoding versions in the workflow.
 
+### Pre-release gates
+
+```powershell
+# Fails if package.json / electron-builder overrides drift, or tag contains "test"
+powershell -File scripts/validate-release-versions.ps1 -Tag v1.0.8
+
+# After staging assets (CI does this automatically):
+powershell -File scripts/validate-release-metadata.ps1 `
+  -MetadataPath release\release-metadata.json `
+  -ClientSetupPath release\MJH-Printer-Setup.exe `
+  -AgentZipPath release\MJH-Printer-Agent-v2.4.8.zip `
+  -ExpectedClientVersion 1.0.8 -ExpectedAgentVersion 2.4.8
+```
+
+Client `build.buildVersion` / `extraMetadata.version` must not hardcode a different number — leave unset so electron-builder uses `package.json` version.
+
+---
+
+## Cloud: `REMOTE_MANIFEST_URL`
+
+After each successful Release, set production:
+
+```env
+REMOTE_MANIFEST_URL=https://github.com/iiinkston/Project/releases/download/v1.0.8/release-metadata.json
+```
+
+Do **not** manually rewrite `CLIENT_UPDATE_*` / `AGENT_UPDATE_*` for every cutover. Keep ENV only as cold fallback (see `docs/ota-manifest-provider-design.md`).
+
+Full GA steps: `docs/ota-ga-release-checklist.md`.
+
 ---
 
 ## Local dry-run (before tagging)
@@ -149,8 +179,9 @@ Delete the test release/tag when done if it should not stay public.
 
 ## Risks / notes
 
-1. **Client `package.json` vs electron-builder `buildVersion` / `extraMetadata.version`** — OTA Client version in metadata comes from `package.json`; ensure NSIS/`app.getVersion()` stays in sync when bumping.
+1. **Client version source of truth** — only `mjh-printer-client/package.json` `version`. Do not reintroduce drifting `buildVersion` / `extraMetadata.version`.
 2. **Agent version ≠ git tag** — zip name uses Agent `package.json` only; tag is the Release channel label.
-3. **Dual workflows** — only `.github/workflows/ota-release.yml` should publish on `v*` (legacy `release.yml` removed to avoid duplicate Releases).
-4. **Code signing** — CI sets `CSC_IDENTITY_AUTO_DISCOVERY=false`; unsigned Setup may trigger SmartScreen on store PCs.
-5. **REMOTE_MANIFEST_URL** — still an ops step after Release; pipeline does not mutate production Cloud env.
+3. **Test tags** — CI refuses tags whose name contains `test` (e.g. `v-test-release`).
+4. **Code signing** — CI sets `CSC_IDENTITY_AUTO_DISCOVERY=false`; unsigned Setup may trigger SmartScreen.
+5. **REMOTE_MANIFEST_URL** — ops step after each Release; pipeline does not mutate production Cloud env.
+6. **Anti-downgrade** — Client/Agent ignore `remote <= current` (see checklist).

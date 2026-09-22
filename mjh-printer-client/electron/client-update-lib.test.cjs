@@ -23,6 +23,14 @@ test("compareVersions orders semver-ish strings", () => {
   assert.equal(compareVersions("1.0.2", "1.0.2"), 0);
 });
 
+test("compareVersions rejects downgrade (remote < current → no update)", () => {
+  // Production rule: offer update only when remote > current
+  const current = "1.0.8";
+  const olderRemote = "1.0.7";
+  assert.equal(compareVersions(olderRemote, current) <= 0, true);
+  assert.equal(compareVersions("1.0.9", current) > 0, true);
+});
+
 test("parseClientManifest requires version url sha", () => {
   const m = parseClientManifest({
     clientVersion: "1.0.3",

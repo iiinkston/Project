@@ -157,10 +157,10 @@ export async function handleOtaUpdateDownload(): Promise<LocalOkResponse | Local
 
       if (compareVersions(remote.agentVersion, AGENT_VERSION) <= 0) {
         logger.info(
-          `OTA DOWNLOAD skipped — already current current=${AGENT_VERSION} latest=${remote.agentVersion}`,
+          `OTA DOWNLOAD ignored (no downgrade/same) current=${AGENT_VERSION} remote=${remote.agentVersion}`,
           "OTA",
         );
-        return { ok: false, error: "当前已是最新版本" };
+        return { ok: false, error: "当前已是最新版本（已忽略同版本或降级）" };
       }
 
       const result = await downloadAndStageUpdate(remote);

@@ -220,7 +220,10 @@ function createClientUpdateService(deps) {
         });
 
         if (compareVersions(remote.clientVersion, currentVersion) <= 0) {
-          return { ok: false, ready: false, error: "当前已是最新版本" };
+          log(
+            `CLIENT OTA DOWNLOAD ignored (no downgrade/same) current=${currentVersion} remote=${remote.clientVersion}`,
+          );
+          return { ok: false, ready: false, error: "当前已是最新版本（已忽略同版本或降级）" };
         }
 
         log(`CLIENT OTA DOWNLOAD START version=${remote.clientVersion}`);

@@ -46,6 +46,9 @@ test("compareVersions and update check expose no secrets", async () => {
   assert.equal(compareVersions("2.4.0", "2.3.0"), 1);
   assert.equal(compareVersions("2.3.0", "2.4.0"), -1);
   assert.equal(compareVersions("2.4.0", "2.4.0"), 0);
+  // Anti-downgrade: older remote must not count as available
+  assert.equal(compareVersions("2.4.7", "2.4.8") <= 0, true);
+  assert.equal(compareVersions("2.4.9", "2.4.8") > 0, true);
   const check = handleUpdateCheck();
   const text = JSON.stringify(check);
   assert.equal(/"token"/i.test(text), false);
