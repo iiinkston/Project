@@ -1,0 +1,177 @@
+# MJH Printer OTA release pipeline
+# Trigger: git tag matching v* only (e.g. v1.0.8, v-test-release)
+# Does NOT run on ordinary main commits.
+#
+# Builds Client + Agent on windows-latest, computes SHA256 of final assets,
+# writes nested release-metadata.json (Cloud OTA contract), creates GitHub Release.
+
+name: OTA Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  ota-release:
+    name: Build, metadata, GitHub Release
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      CI: "true"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: |
+            mjh-printer-agent/pnpm-lock.yaml
+            mjh-printer-client/pnpm-lock.yaml
+
+      - name: Read package versions
+        id: ver
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $raw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\scripts\get-version.ps1" -WorkspaceRoot $env:GITHUB_WORKSPACE
+          Write-Host "versions=$raw"
+          $v = $raw | ConvertFrom-Json
+          "client_version=$($v.clientVersion)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "agent_version=$($v.agentVersion)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "CLIENT_VERSION=$($v.clientVersion)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "AGENT_VERSION=$($v.agentVersion)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # ── Agent (version from package.json, not git tag) ─────
+      - name: Install Agent dependencies
+        working-directory: mjh-printer-agent
+        run: pnpm install --frozen-lockfile
+
+      - name: Agent test
+        working-directory: mjh-printer-agent
+        run: pnpm test
+
+      - name: Agent typecheck
+        working-directory: mjh-printer-agent
+        run: pnpm typecheck
+
+      - name: Agent build:exe
+        working-directory: mjh-printer-agent
+        run: pnpm build:exe
+
+      # ── Client (stages Agent into NSIS Setup) ──────────────
+      - name: Install Client dependencies
+        working-directory: mjh-printer-client
+        run: pnpm install --frozen-lockfile
+
+      - name: Client dist:setup
+        working-directory: mjh-printer-client
+        run: pnpm dist:setup
+
+      # ── Stage assets + nested OTA metadata with SHA256 ─────
+      - name: Stage release assets and metadata
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "${{ github.ref_name }}"
+          $repo = "${{ github.repository }}"
+          $clientVersion = "${{ steps.ver.outputs.client_version }}"
+          $agentVersion = "${{ steps.ver.outputs.agent_version }}"
+          $ws = $env:GITHUB_WORKSPACE
+          $out = Join-Path $ws "release"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+          $setupName = "MJH-Printer-Setup.exe"
+          $agentZipName = "MJH-Printer-Agent-v$agentVersion.zip"
+          $setupSrc = Join-Path $ws "dist\client-build\MJH Printer Setup.exe"
+          $agentZipSrc = Join-Path $ws "mjh-printer-agent\release\$agentZipName"
+
+          if (-not (Test-Path -LiteralPath $setupSrc)) {
+            throw "Client Setup missing: $setupSrc"
+          }
+          if (-not (Test-Path -LiteralPath $agentZipSrc)) {
+            throw "Agent zip missing (expected package.json version=$agentVersion): $agentZipSrc"
+          }
+
+          $setupDst = Join-Path $out $setupName
+          $agentDst = Join-Path $out $agentZipName
+          Copy-Item -LiteralPath $setupSrc -Destination $setupDst -Force
+          Copy-Item -LiteralPath $agentZipSrc -Destination $agentDst -Force
+
+          $clientSha = (Get-FileHash -LiteralPath $setupDst -Algorithm SHA256).Hash.ToLowerInvariant()
+          $agentSha = (Get-FileHash -LiteralPath $agentDst -Algorithm SHA256).Hash.ToLowerInvariant()
+
+          $base = "https://github.com/$repo/releases/download/$tag"
+          $metadata = [ordered]@{
+            client = [ordered]@{
+              version = $clientVersion
+              url     = "$base/$setupName"
+              sha256  = $clientSha
+            }
+            agent = [ordered]@{
+              version = $agentVersion
+              url     = "$base/$agentZipName"
+              sha256  = $agentSha
+            }
+          }
+
+          $metaPath = Join-Path $out "release-metadata.json"
+          # UTF-8 without BOM — Cloud / Agent JSON parsers
+          $json = ($metadata | ConvertTo-Json -Depth 6)
+          [System.IO.File]::WriteAllText($metaPath, $json + "`n", (New-Object System.Text.UTF8Encoding $false))
+
+          Write-Host "=== release-metadata.json ==="
+          Get-Content -LiteralPath $metaPath -Raw
+          Write-Host "CLIENT_SHA256=$clientSha"
+          Write-Host "AGENT_SHA256=$agentSha"
+          Write-Host "Staged: $setupName , $agentZipName , release-metadata.json"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mjh-ota-release-${{ github.ref_name }}
+          path: release/**
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: MJH Printer ${{ github.ref_name }}
+          body: |
+            ## MJH Printer OTA ${{ github.ref_name }}
+
+            | Package | Version (from package.json) |
+            |---------|------------------------------|
+            | Client Setup | `${{ env.CLIENT_VERSION }}` |
+            | Agent | `${{ env.AGENT_VERSION }}` |
+
+            ### Assets
+            - `MJH-Printer-Setup.exe`
+            - `MJH-Printer-Agent-v${{ env.AGENT_VERSION }}.zip`
+            - `release-metadata.json` (nested `{ client, agent }` + SHA256)
+
+            Point Cloud `REMOTE_MANIFEST_URL` at the `release-metadata.json` download URL
+            (or host a copy) so `GET /v1/printer/update/latest` serves this release.
+          files: |
+            release/MJH-Printer-Setup.exe
+            release/MJH-Printer-Agent-v${{ env.AGENT_VERSION }}.zip
+            release/release-metadata.json
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
