@@ -164,19 +164,19 @@ export function handleUpdateApply(): LocalOkResponse | LocalErrorResponse {
   }
 
   logger.info(`[LocalAPI] update start source=${source} script=${script}`, "UPDATE");
+  logger.info("OTA APPLY via update-agent.ps1 (elevated)", "OTA");
 
-  // Detached: update script stops this process and replaces EXE.
+  // update-agent.ps1 requires Administrator (#Requires -RunAsAdministrator).
+  // Spawn via Start-Process -Verb RunAs so UAC elevates; otherwise Apply is a no-op
+  // while Local API still returns ok:true.
+  const psEsc = (p: string) => p.replace(/'/g, "''");
+  const elevateCmd =
+    `Start-Process -FilePath 'powershell.exe' -Verb RunAs -WindowStyle Hidden ` +
+    `-ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File','${psEsc(script)}','-Source','${psEsc(source)}')`;
+
   const child = spawn(
     "powershell.exe",
-    [
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      script,
-      "-Source",
-      source,
-    ],
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", elevateCmd],
     {
       detached: true,
       stdio: "ignore",
@@ -187,6 +187,6 @@ export function handleUpdateApply(): LocalOkResponse | LocalErrorResponse {
 
   return {
     ok: true,
-    message: "已启动更新，Agent 将重启。请稍候刷新状态。",
+    message: "已请求管理员权限启动更新，确认 UAC 后 Agent 将重启。请稍候刷新状态。",
   };
 }
