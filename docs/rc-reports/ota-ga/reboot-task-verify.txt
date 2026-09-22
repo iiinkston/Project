@@ -1,0 +1,8 @@
+﻿
+文件夹: \
+主机名:       DESKTOP-1N2OP3S
+任务名:       \MJH OTA GA Reboot Validate
+下次运行时间: N/A
+模式:         就绪
+登录状态:     只使用交互方式
+REGISTER_OK

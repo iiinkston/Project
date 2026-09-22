@@ -1,0 +1,11 @@
+﻿{
+    "preRebootClientLog":  "2026-09-22T10:56:25.417Z app start version=1.0.7 exec=C:\\Program Files\\MJH Printer\\MJH Printer Client.exe hwAccel=off singleInstance=yes",
+    "rebootTask":  true,
+    "preRebootAgent":  {
+                           "version":  "2.4.8",
+                           "bound":  true,
+                           "cloud":  true,
+                           "printer":  true
+                       },
+    "at":  "2026-09-22T11:00:47.9083092Z"
+}

@@ -243,6 +243,46 @@ try {
   } else {
     Write-Host "UPDATE SUCCESS"
   }
+
+  # Ensure OTA Apply scheduled task exists (self-heal for upgrades from older packages)
+  try {
+    $UpdateTaskName = "MJH Printer Agent Update"
+    $HelperScript = Join-Path $InstallDir "apply-update-helper.ps1"
+    $HelperSrc = Join-Path $PSScriptRoot "apply-update-helper.ps1"
+    if ((Test-Path $HelperSrc) -and -not (Test-Path $HelperScript)) {
+      Copy-Item -Force $HelperSrc $HelperScript
+    }
+    if (Test-Path $HelperScript) {
+      $existingUpdate = Get-ScheduledTask -TaskName $UpdateTaskName -ErrorAction SilentlyContinue
+      if ($existingUpdate) {
+        Unregister-ScheduledTask -TaskName $UpdateTaskName -Confirm:$false -ErrorAction SilentlyContinue
+      }
+      $UpdateAction = New-ScheduledTaskAction `
+        -Execute "powershell.exe" `
+        -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$HelperScript`"" `
+        -WorkingDirectory $InstallDir
+      $UpdateSettings = New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 30) `
+        -MultipleInstances IgnoreNew
+      $UpdatePrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+      Register-ScheduledTask -TaskName $UpdateTaskName -Action $UpdateAction -Settings $UpdateSettings -Principal $UpdatePrincipal -Force | Out-Null
+      try {
+        $svc = New-Object -ComObject "Schedule.Service"
+        $svc.Connect()
+        $folder = $svc.GetFolder("\")
+        $task = $folder.GetTask($UpdateTaskName)
+        $sddl = "D:AR(A;;FA;;;BA)(A;;FA;;;SY)(A;;0x1200a9;;;AU)"
+        $task.SetSecurityDescriptor($sddl, 0)
+      } catch {
+        Write-Warning "OTA update task ACL not set: $($_.Exception.Message)"
+      }
+      Write-Host "Ensured scheduled task: $UpdateTaskName"
+    }
+  } catch {
+    Write-Warning "Could not ensure OTA update task: $($_.Exception.Message)"
+  }
 }
 catch {
   Write-Host "UPDATE FAILED — $($_.Exception.Message)"

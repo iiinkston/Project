@@ -1,0 +1,30 @@
+﻿{
+    "version":  "2.4.7",
+    "build":  "2026-09-22T10:36:37Z",
+    "running":  true,
+    "pid":  30180,
+    "startedAt":  "2026-09-22T10:43:55.409Z",
+    "updatedAt":  "2026-09-22T10:44:14.577Z",
+    "lastSyncAt":  "2026-09-22T10:44:14.145Z",
+    "bound":  true,
+    "lifecycle":  "RUNNING",
+    "storeName":  "Man Jiang Hong",
+    "cloud":  {
+                  "online":  true
+              },
+    "printer":  {
+                    "model":  "XP-N160II",
+                    "ip":  "192.168.0.110",
+                    "port":  9100,
+                    "online":  true
+                },
+    "queue":  {
+                  "pending":  0
+              },
+    "worker":  {
+                   "lastPollAt":  "2026-09-22T10:44:14.145Z",
+                   "lastClaimAt":  null,
+                   "lastPrintAt":  null,
+                   "lastError":  null
+               }
+}

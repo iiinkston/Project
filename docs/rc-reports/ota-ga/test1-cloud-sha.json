@@ -1,0 +1,10 @@
+﻿{
+    "actualClientSha":  "38a215f6efda13b1444f51c7250e0510c94be383d254646c2631fc5d781dfdbd",
+    "actualAgentSha":  "5783fe1d2928831ca973a5a680b0e47666a5405fa276a6acd8708fcb49512e8f",
+    "declaredAgentSha":  "5783fe1d2928831ca973a5a680b0e47666a5405fa276a6acd8708fcb49512e8f",
+    "declaredClientSha":  "38a215f6efda13b1444f51c7250e0510c94be383d254646c2631fc5d781dfdbd",
+    "clientShaMatch":  true,
+    "agentShaMatch":  true,
+    "cloudAgentVersion":  "2.4.5",
+    "cloudClientVersion":  "1.0.5"
+}

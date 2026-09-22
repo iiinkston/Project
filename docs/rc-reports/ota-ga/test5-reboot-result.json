@@ -1,0 +1,15 @@
+﻿{
+    "at":  "2026-09-22T11:12:28.0431282Z",
+    "agentProcess":  true,
+    "clientProcess":  true,
+    "agentVersion":  "2.4.8",
+    "clientVersion":  "1.0.7",
+    "bound":  true,
+    "cloudOnline":  true,
+    "printerOnline":  true,
+    "lifecycle":  "RUNNING",
+    "storeName":  "Man Jiang Hong",
+    "printOk":  true,
+    "printMessage":  "Print jobs sent successfully (hardware + V2 demo)",
+    "pass":  true
+}
