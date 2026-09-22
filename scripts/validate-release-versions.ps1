@@ -2,6 +2,9 @@
 # - package.json Client/Agent: semver + electron-builder override drift checks (separate)
 # - git tag (when present): must be vX.Y.Z; used as OTA metadata client.version source
 #
+# stdout: ONLY one JSON object (machine-readable)
+# stderr: human diagnostics / warnings
+#
 # Usage:
 #   .\scripts\validate-release-versions.ps1
 #   .\scripts\validate-release-versions.ps1 -WorkspaceRoot D:\Project -Tag v1.0.9
@@ -18,8 +21,12 @@ if (-not $WorkspaceRoot) {
 }
 
 function Fail([string]$msg) {
-  Write-Error "VERSION_GATE_FAIL: $msg"
+  [Console]::Error.WriteLine("VERSION_GATE_FAIL: $msg")
   exit 1
+}
+
+function Write-Diag([string]$msg) {
+  [Console]::Error.WriteLine($msg)
 }
 
 function Assert-Semver([string]$label, [string]$ver) {
@@ -27,6 +34,12 @@ function Assert-Semver([string]$label, [string]$ver) {
   if ($ver -notmatch '^\d+\.\d+\.\d+$') {
     Fail "$label='$ver' must be numeric semver X.Y.Z (no -test / -ga suffix)"
   }
+}
+
+function Read-JsonStdout([object]$raw) {
+  $line = @($raw) | Where-Object { $_ -and ("$_").Trim().StartsWith("{") } | Select-Object -Last 1
+  if (-not $line) { Fail "expected JSON on stdout from nested script" }
+  return ($line | ConvertFrom-Json)
 }
 
 $clientPkgPath = Join-Path $WorkspaceRoot "mjh-printer-client\package.json"
@@ -62,21 +75,21 @@ $tagClientVersion = $null
 if ($Tag) {
   $tagRaw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "parse-release-tag.ps1") -Tag $Tag
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  $parsed = $tagRaw | ConvertFrom-Json
+  $parsed = Read-JsonStdout $tagRaw
   $tagClientVersion = [string]$parsed.clientVersion
   Assert-Semver "git tag client version" $tagClientVersion
   if ($tagClientVersion -ne $packageClientVersion) {
-    Write-Warning "TAG_PKG_DRIFT: tag client=$tagClientVersion package.json client=$packageClientVersion — release-metadata uses TAG; ensure app.getVersion / package.json are bumped when intended."
+    Write-Diag "WARNING: TAG_PKG_DRIFT: tag client=$tagClientVersion package.json client=$packageClientVersion — release-metadata uses TAG; ensure app.getVersion / package.json are bumped when intended."
   }
 }
 
 $releaseClientVersion = if ($tagClientVersion) { $tagClientVersion } else { $packageClientVersion }
 
-Write-Host "VERSION_GATE_OK packageClient=$packageClientVersion releaseClient=$releaseClientVersion agent=$agentVersion tag=$Tag"
-@{
+Write-Diag "VERSION_GATE_OK packageClient=$packageClientVersion releaseClient=$releaseClientVersion agent=$agentVersion tag=$Tag"
+[Console]::Out.WriteLine((@{
   packageClientVersion = $packageClientVersion
   clientVersion        = $releaseClientVersion
   agentVersion         = $agentVersion
   tag                  = $Tag
   tagClientVersion     = $tagClientVersion
-} | ConvertTo-Json -Compress
+} | ConvertTo-Json -Compress))

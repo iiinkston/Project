@@ -50,15 +50,21 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $tag = "${{ github.ref_name }}"
+
+          function Read-ScriptJson([object]$raw, [string]$label) {
+            $line = @($raw) | Where-Object { $_ -and ("$_").Trim().StartsWith("{") } | Select-Object -Last 1
+            if (-not $line) { throw "No JSON object in $label stdout" }
+            return ($line | ConvertFrom-Json)
+          }
+
           $gateRaw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\scripts\validate-release-versions.ps1" `
             -WorkspaceRoot $env:GITHUB_WORKSPACE -Tag $tag
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Write-Host "gate=$gateRaw"
-          $gate = $gateRaw | ConvertFrom-Json
+          $gate = Read-ScriptJson $gateRaw "validate-release-versions"
 
           $tagRaw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\scripts\parse-release-tag.ps1" -Tag $tag
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $tagInfo = $tagRaw | ConvertFrom-Json
+          $tagInfo = Read-ScriptJson $tagRaw "parse-release-tag"
           $clientVersion = [string]$tagInfo.clientVersion
           $agentVersion = [string]$gate.agentVersion
 
