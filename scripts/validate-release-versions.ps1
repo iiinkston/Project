@@ -1,10 +1,10 @@
 # Pre-release version consistency gate for OTA CI.
-# Fails if Client/Agent package.json versions do not match embedded builder fields
-# or if the git tag (when present) is malformed.
+# - package.json Client/Agent: semver + electron-builder override drift checks (separate)
+# - git tag (when present): must be vX.Y.Z; used as OTA metadata client.version source
 #
 # Usage:
 #   .\scripts\validate-release-versions.ps1
-#   .\scripts\validate-release-versions.ps1 -WorkspaceRoot D:\Project -Tag v1.0.8
+#   .\scripts\validate-release-versions.ps1 -WorkspaceRoot D:\Project -Tag v1.0.9
 
 param(
   [string]$WorkspaceRoot = "",
@@ -38,38 +38,45 @@ if (-not (Test-Path -LiteralPath $agentPkgPath)) { Fail "missing $agentPkgPath" 
 $clientPkg = Get-Content -LiteralPath $clientPkgPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $agentPkg = Get-Content -LiteralPath $agentPkgPath -Raw -Encoding UTF8 | ConvertFrom-Json
 
-$clientVersion = [string]$clientPkg.version
+$packageClientVersion = [string]$clientPkg.version
 $agentVersion = [string]$agentPkg.version
-Assert-Semver "mjh-printer-client/package.json version" $clientVersion
+Assert-Semver "mjh-printer-client/package.json version" $packageClientVersion
 Assert-Semver "mjh-printer-agent/package.json version" $agentVersion
 
-# electron-builder overrides must not drift from package.json
+# electron-builder overrides must not drift from package.json (build identity)
 $build = $clientPkg.build
 if ($null -ne $build) {
-  if ($null -ne $build.buildVersion -and [string]$build.buildVersion -ne "" -and [string]$build.buildVersion -ne $clientVersion) {
-    Fail "Client build.buildVersion='$($build.buildVersion)' != package.json version='$clientVersion'. Remove override or sync."
+  if ($null -ne $build.buildVersion -and [string]$build.buildVersion -ne "" -and [string]$build.buildVersion -ne $packageClientVersion) {
+    Fail "Client build.buildVersion='$($build.buildVersion)' != package.json version='$packageClientVersion'. Remove override or sync."
   }
   if ($null -ne $build.extraMetadata -and $null -ne $build.extraMetadata.version) {
     $em = [string]$build.extraMetadata.version
-    if ($em -ne "" -and $em -ne $clientVersion) {
-      Fail "Client build.extraMetadata.version='$em' != package.json version='$clientVersion'. Remove override or sync."
+    if ($em -ne "" -and $em -ne $packageClientVersion) {
+      Fail "Client build.extraMetadata.version='$em' != package.json version='$packageClientVersion'. Remove override or sync."
     }
   }
 }
 
-# Optional: tag hygiene (tag is release channel label; need not equal agent version)
+# OTA release metadata client.version comes from git tag (not package.json)
+$tagClientVersion = $null
 if ($Tag) {
-  if ($Tag -notmatch '^v') {
-    Fail "Tag '$Tag' must start with 'v'"
-  }
-  if ($Tag -match '(?i)test') {
-    Fail "Tag '$Tag' looks like a test tag — refuse production OTA Release workflow"
+  $tagRaw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "parse-release-tag.ps1") -Tag $Tag
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  $parsed = $tagRaw | ConvertFrom-Json
+  $tagClientVersion = [string]$parsed.clientVersion
+  Assert-Semver "git tag client version" $tagClientVersion
+  if ($tagClientVersion -ne $packageClientVersion) {
+    Write-Warning "TAG_PKG_DRIFT: tag client=$tagClientVersion package.json client=$packageClientVersion — release-metadata uses TAG; ensure app.getVersion / package.json are bumped when intended."
   }
 }
 
-Write-Host "VERSION_GATE_OK client=$clientVersion agent=$agentVersion tag=$Tag"
+$releaseClientVersion = if ($tagClientVersion) { $tagClientVersion } else { $packageClientVersion }
+
+Write-Host "VERSION_GATE_OK packageClient=$packageClientVersion releaseClient=$releaseClientVersion agent=$agentVersion tag=$Tag"
 @{
-  clientVersion = $clientVersion
-  agentVersion  = $agentVersion
-  tag           = $Tag
+  packageClientVersion = $packageClientVersion
+  clientVersion        = $releaseClientVersion
+  agentVersion         = $agentVersion
+  tag                  = $Tag
+  tagClientVersion     = $tagClientVersion
 } | ConvertTo-Json -Compress

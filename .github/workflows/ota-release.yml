@@ -1,10 +1,10 @@
 # MJH Printer OTA release pipeline
-# Trigger: git tag matching v* only (e.g. v1.0.8)
+# Trigger: git tag matching v* only (e.g. v1.0.9)
 # Does NOT run on ordinary main commits.
 # Test tags containing "test" are rejected by validate-release-versions.ps1.
 #
-# Builds Client + Agent on windows-latest, computes SHA256 of final assets,
-# writes nested release-metadata.json (Cloud OTA contract), creates GitHub Release.
+# release-metadata.json client.version = git tag semver (v1.0.9 → 1.0.9)
+# agent.version = mjh-printer-agent/package.json (independent)
 
 name: OTA Release
 
@@ -50,15 +50,30 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $tag = "${{ github.ref_name }}"
-          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\scripts\validate-release-versions.ps1" `
+          $gateRaw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\scripts\validate-release-versions.ps1" `
             -WorkspaceRoot $env:GITHUB_WORKSPACE -Tag $tag
-          $raw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\scripts\get-version.ps1" -WorkspaceRoot $env:GITHUB_WORKSPACE
-          Write-Host "versions=$raw"
-          $v = $raw | ConvertFrom-Json
-          "client_version=$($v.clientVersion)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "agent_version=$($v.agentVersion)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "CLIENT_VERSION=$($v.clientVersion)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "AGENT_VERSION=$($v.agentVersion)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host "gate=$gateRaw"
+          $gate = $gateRaw | ConvertFrom-Json
+
+          $tagRaw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\scripts\parse-release-tag.ps1" -Tag $tag
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tagInfo = $tagRaw | ConvertFrom-Json
+          $clientVersion = [string]$tagInfo.clientVersion
+          $agentVersion = [string]$gate.agentVersion
+
+          if (-not $clientVersion) { throw "Failed to parse client version from tag $tag" }
+          if (-not $agentVersion) { throw "Failed to read agent version from package.json" }
+
+          Write-Host "RELEASE_CLIENT_VERSION(from tag)=$clientVersion"
+          Write-Host "PACKAGE_CLIENT_VERSION=$($gate.packageClientVersion)"
+          Write-Host "AGENT_VERSION(from package.json)=$agentVersion"
+
+          "client_version=$clientVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "agent_version=$agentVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "package_client_version=$($gate.packageClientVersion)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "CLIENT_VERSION=$clientVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "AGENT_VERSION=$agentVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       # ── Agent (version from package.json, not git tag) ─────
       - name: Install Agent dependencies
@@ -93,6 +108,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $tag = "${{ github.ref_name }}"
           $repo = "${{ github.repository }}"
+          # OTA client.version MUST be git tag semver (not package.json)
           $clientVersion = "${{ steps.ver.outputs.client_version }}"
           $agentVersion = "${{ steps.ver.outputs.agent_version }}"
           $ws = $env:GITHUB_WORKSPACE
@@ -142,12 +158,30 @@ jobs:
           Write-Host "CLIENT_SHA256=$clientSha"
           Write-Host "AGENT_SHA256=$agentSha"
 
+          # Fail if tag semver != metadata client.version
           & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$ws\scripts\validate-release-metadata.ps1" `
             -MetadataPath $metaPath `
             -ClientSetupPath $setupDst `
             -AgentZipPath $agentDst `
             -ExpectedClientVersion $clientVersion `
-            -ExpectedAgentVersion $agentVersion
+            -ExpectedAgentVersion $agentVersion `
+            -ReleaseTag $tag
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Release notes: Client Setup from git tag (same as metadata), Agent from package.json
+          $notesPath = Join-Path $out "RELEASE_NOTES.md"
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$ws\scripts\generate-release-notes.ps1" `
+            -Tag $tag `
+            -ClientVersion $clientVersion `
+            -AgentVersion $agentVersion `
+            -Repository $repo `
+            -OutFile $notesPath
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$ws\scripts\validate-release-notes.ps1" `
+            -NotesPath $notesPath `
+            -MetadataPath $metaPath
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
@@ -161,21 +195,7 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: MJH Printer ${{ github.ref_name }}
-          body: |
-            ## MJH Printer OTA ${{ github.ref_name }}
-
-            | Package | Version (from package.json) |
-            |---------|------------------------------|
-            | Client Setup | `${{ env.CLIENT_VERSION }}` |
-            | Agent | `${{ env.AGENT_VERSION }}` |
-
-            ### Assets
-            - `MJH-Printer-Setup.exe`
-            - `MJH-Printer-Agent-v${{ env.AGENT_VERSION }}.zip`
-            - `release-metadata.json` (nested `{ client, agent }` + SHA256)
-
-            Cloud `REMOTE_MANIFEST_URL`:
-            `https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/release-metadata.json`
+          body_path: release/RELEASE_NOTES.md
           files: |
             release/MJH-Printer-Setup.exe
             release/MJH-Printer-Agent-v${{ env.AGENT_VERSION }}.zip

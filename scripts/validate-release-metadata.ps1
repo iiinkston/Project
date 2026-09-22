@@ -3,14 +3,18 @@
 #   .\scripts\validate-release-metadata.ps1 -MetadataPath release\release-metadata.json `
 #     -ClientSetupPath release\MJH-Printer-Setup.exe `
 #     -AgentZipPath release\MJH-Printer-Agent-v2.4.8.zip `
-#     -ExpectedClientVersion 1.0.8 -ExpectedAgentVersion 2.4.8
+#     -ExpectedClientVersion 1.0.9 -ExpectedAgentVersion 2.4.8 `
+#     -ReleaseTag v1.0.9
+#
+# When -ReleaseTag is set, tag semver (v1.0.9 → 1.0.9) MUST equal metadata client.version.
 
 param(
   [Parameter(Mandatory = $true)][string]$MetadataPath,
   [Parameter(Mandatory = $true)][string]$ClientSetupPath,
   [Parameter(Mandatory = $true)][string]$AgentZipPath,
   [Parameter(Mandatory = $true)][string]$ExpectedClientVersion,
-  [Parameter(Mandatory = $true)][string]$ExpectedAgentVersion
+  [Parameter(Mandatory = $true)][string]$ExpectedAgentVersion,
+  [string]$ReleaseTag = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -49,6 +53,21 @@ if ([string]$meta.agent.version -ne $ExpectedAgentVersion) {
   Fail "agent.version='$($meta.agent.version)' != expected '$ExpectedAgentVersion'"
 }
 
+# Tag must equal metadata client.version (OTA version source of truth)
+if ($ReleaseTag) {
+  $parseScript = Join-Path $PSScriptRoot "parse-release-tag.ps1"
+  $tagRaw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $parseScript -Tag $ReleaseTag
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  $tagInfo = $tagRaw | ConvertFrom-Json
+  $tagClient = [string]$tagInfo.clientVersion
+  if ($tagClient -ne [string]$meta.client.version) {
+    Fail "ReleaseTag '$ReleaseTag' → '$tagClient' != metadata client.version='$($meta.client.version)'"
+  }
+  if ($tagClient -ne $ExpectedClientVersion) {
+    Fail "ReleaseTag '$ReleaseTag' → '$tagClient' != ExpectedClientVersion='$ExpectedClientVersion'"
+  }
+}
+
 $clientSha = (Get-FileHash -LiteralPath $ClientSetupPath -Algorithm SHA256).Hash.ToLowerInvariant()
 $agentSha = (Get-FileHash -LiteralPath $AgentZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
 
@@ -64,4 +83,4 @@ if ([IO.Path]::GetFileName($AgentZipPath) -ne $expectedAgentName) {
   Fail "agent zip filename must be '$expectedAgentName' (got '$(Split-Path $AgentZipPath -Leaf)')"
 }
 
-Write-Host "METADATA_GATE_OK client=$ExpectedClientVersion agent=$ExpectedAgentVersion"
+Write-Host "METADATA_GATE_OK client=$ExpectedClientVersion agent=$ExpectedAgentVersion tag=$ReleaseTag"
