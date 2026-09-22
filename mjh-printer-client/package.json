@@ -1,6 +1,6 @@
 {
   "name": "mjh-printer-client",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "private": true,
   "description": "满江红打印助手 — Windows GUI Control Plane for MJH Printer Agent",
   "author": "满江红",
@@ -35,9 +35,9 @@
   "build": {
     "appId": "com.manjianghong.printer-client",
     "productName": "MJH Printer Client",
-    "buildVersion": "1.0.6",
+    "buildVersion": "1.0.7",
     "extraMetadata": {
-      "version": "1.0.6"
+      "version": "1.0.7"
     },
     "directories": {
       "output": "../dist/client-build"
