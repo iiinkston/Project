@@ -4,6 +4,7 @@ import {
   type DiscoverHit,
   type LocalStatus,
   type UpdateCheck,
+  type UpdateStatus,
 } from "./api/localAgent";
 import { Wizard } from "./wizard/Wizard";
 
@@ -36,6 +37,7 @@ export function App() {
   const [showWizard, setShowWizard] = useState<boolean | null>(null);
   const [wizardStart, setWizardStart] = useState<1 | 3>(1);
   const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [clientVersion, setClientVersion] = useState<string>("1.0.0");
 
   const refresh = useCallback(async () => {
@@ -183,11 +185,28 @@ export function App() {
     try {
       const info = await localAgent.checkUpdate();
       setUpdateInfo(info);
+      const st = await localAgent.updateStatus();
+      setUpdateStatus(st);
       setToast(
         info.updateAvailable
           ? `发现新版本 ${info.latestVersion}`
           : `已是最新（${info.currentVersion}）`,
       );
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onDownloadUpdate() {
+    setBusy("正在下载更新…");
+    setToast(null);
+    try {
+      const r = await localAgent.downloadUpdate();
+      const st = await localAgent.updateStatus();
+      setUpdateStatus(st);
+      setToast(r.ok ? r.message || "下载完成" : r.error || "下载失败");
     } catch (e) {
       setToast(e instanceof Error ? e.message : String(e));
     } finally {
@@ -201,7 +220,6 @@ export function App() {
     try {
       const r = await localAgent.applyUpdate();
       setToast(r.ok ? r.message || "更新已启动，请稍候" : r.error || "更新失败");
-      // Agent restarts — poll until back
       setTimeout(() => void refresh(), 8000);
     } catch (e) {
       setToast(e instanceof Error ? e.message : String(e));
@@ -442,25 +460,42 @@ export function App() {
           <section className="card">
             <h2>Agent 更新</h2>
             <p className="hint">
-              通过本机 Agent API 检查与安装更新。Client 不会自行复制 EXE。
+              检查远程版本、下载到本机后安装。不会强制更新；安装仍由本机 update-agent.ps1 完成。
             </p>
             <div className="grid" style={{ marginTop: 12 }}>
               <div>
                 <div className="label">当前版本</div>
                 <div className="value">
-                  {updateInfo?.currentVersion ?? status?.version ?? "—"}
+                  {updateStatus?.currentVersion ??
+                    updateInfo?.currentVersion ??
+                    status?.version ??
+                    "—"}
                 </div>
               </div>
               <div>
                 <div className="label">最新版本</div>
-                <div className="value">{updateInfo?.latestVersion ?? "—"}</div>
+                <div className="value">
+                  {updateStatus?.latestVersion ?? updateInfo?.latestVersion ?? "—"}
+                </div>
               </div>
             </div>
-            {updateInfo?.notes && (
+            {(updateStatus?.updateAvailable || updateInfo?.updateAvailable) && (
+              <p className="sub" style={{ marginTop: 12 }}>
+                有新版本可用：
+                {updateStatus?.latestVersion ?? updateInfo?.latestVersion}
+                {updateStatus?.ready ? "（已下载，可安装）" : ""}
+              </p>
+            )}
+            {(updateStatus?.notes || updateInfo?.notes) && (
               <div style={{ marginTop: 12 }}>
                 <div className="label">更新说明</div>
-                <p className="sub">{updateInfo.notes}</p>
+                <p className="sub">{updateStatus?.notes ?? updateInfo?.notes}</p>
               </div>
+            )}
+            {updateStatus?.lastError && (
+              <p className="hint" role="alert">
+                更新错误：{updateStatus.lastError}
+              </p>
             )}
             <div className="actions" style={{ marginTop: 16 }}>
               <button
@@ -471,10 +506,21 @@ export function App() {
                 检查更新
               </button>
               <button
-                disabled={!agentUp || !!busy || !updateInfo?.updateAvailable}
+                disabled={
+                  !agentUp ||
+                  !!busy ||
+                  !(updateStatus?.updateAvailable || updateInfo?.updateAvailable) ||
+                  Boolean(updateStatus?.ready)
+                }
+                onClick={() => void onDownloadUpdate()}
+              >
+                下载更新
+              </button>
+              <button
+                disabled={!agentUp || !!busy || !updateStatus?.ready}
                 onClick={() => void onApplyUpdate()}
               >
-                立即更新
+                安装更新
               </button>
             </div>
           </section>

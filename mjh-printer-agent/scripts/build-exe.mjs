@@ -217,6 +217,7 @@ copyFileSync(
   join(root, "config", "printer.unbound.json"),
   join(releaseDir, "config", "printer.unbound.json"),
 );
+copyFileSync(join(root, "config", "update.json"), join(releaseDir, "config", "update.json"));
 
 const scriptFiles = [
   "install.ps1",
@@ -283,6 +284,11 @@ for (const name of ["MJH-Printer-Agent.exe", "README.md", "BUILD.txt", ...script
 }
 mkdirSync(join(staging, "config"), { recursive: true });
 copyFileSync(join(releaseDir, "config", "printer.json"), join(staging, "config", "printer.json"));
+copyFileSync(
+  join(releaseDir, "config", "printer.unbound.json"),
+  join(staging, "config", "printer.unbound.json"),
+);
+copyFileSync(join(releaseDir, "config", "update.json"), join(staging, "config", "update.json"));
 
 try {
   execFileSync(

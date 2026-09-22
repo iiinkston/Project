@@ -16,7 +16,12 @@ import { AGENT_BUILD, AGENT_VERSION } from "../version.js";
 import { runTestPrint } from "../printer/run-test-print.js";
 import { logger } from "../logger.js";
 import { discoverPrinters9100 } from "./discover.js";
-import { handleUpdateApply, handleUpdateCheck } from "./update.js";
+import {
+  handleOtaUpdateApply,
+  handleOtaUpdateCheck,
+  handleOtaUpdateDownload,
+  handleOtaUpdateStatus,
+} from "../update/ota-service.js";
 import { getAgentRuntime } from "../runtime/agent-runtime.js";
 import type {
   LocalBindBody,
@@ -101,16 +106,33 @@ export async function handleLocalStatus(): Promise<LocalStatusResponse> {
   return body;
 }
 
-export function handleLocalUpdateCheck(): LocalUpdateCheckResponse {
-  const body = handleUpdateCheck();
+export async function handleLocalUpdateCheck(): Promise<LocalUpdateCheckResponse> {
+  const body = await handleOtaUpdateCheck();
+  assertNoSecrets(body);
+  return body;
+}
+
+export function handleLocalUpdateStatus(): ReturnType<typeof handleOtaUpdateStatus> {
+  const body = handleOtaUpdateStatus();
+  assertNoSecrets(body);
+  return body;
+}
+
+export async function handleLocalUpdateDownload(): Promise<LocalOkResponse | LocalErrorResponse> {
+  const body = await handleOtaUpdateDownload();
   assertNoSecrets(body);
   return body;
 }
 
 export function handleLocalUpdate(): LocalOkResponse | LocalErrorResponse {
-  const body = handleUpdateApply();
+  // Prefer OTA apply path (still reuses update-agent.ps1).
+  const body = handleOtaUpdateApply();
   assertNoSecrets(body);
   return body;
+}
+
+export function handleLocalUpdateApply(): LocalOkResponse | LocalErrorResponse {
+  return handleLocalUpdate();
 }
 
 export async function handleLocalLogs(limitRaw?: number): Promise<LocalLogsResponse> {

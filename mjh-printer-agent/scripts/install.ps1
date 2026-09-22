@@ -188,6 +188,20 @@ if (Test-Path $TargetConfig) {
   }
 }
 
+# Seed OTA config if missing (does not overwrite restaurant edits).
+$TargetUpdateConfig = Join-Path $ConfigDir "update.json"
+if (-not (Test-Path $TargetUpdateConfig)) {
+  $pkgUpdate = Join-Path $PackageRoot "config\update.json"
+  $devUpdate = "D:\Project\mjh-printer-agent\config\update.json"
+  if (Test-Path $pkgUpdate) {
+    Copy-Item $pkgUpdate $TargetUpdateConfig
+    Write-Host "Seeded update.json to ProgramData (OTA disabled by default)."
+  } elseif (Test-Path $devUpdate) {
+    Copy-Item $devUpdate $TargetUpdateConfig
+    Write-Host "Seeded development update.json to ProgramData."
+  }
+}
+
 Set-MjhConfigFileAcl -Path $TargetConfig
 
 $ExePath = Join-Path $InstallDir $ExeName

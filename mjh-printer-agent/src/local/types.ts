@@ -45,6 +45,19 @@ export type LocalUpdateCheckResponse = {
   notes: string | null;
 };
 
+export type LocalUpdateStatusResponse = {
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+  downloaded: boolean;
+  ready: boolean;
+  notes: string | null;
+  mandatory: boolean;
+  lastCheckAt: string | null;
+  lastError: string | null;
+  remoteEnabled: boolean;
+};
+
 export type LocalLogsResponse = {
   logs: string[];
 };

@@ -29,6 +29,7 @@ import { markCurrentAsAgentProcess } from "./process/agent-process.js";
 import { runTestPrint } from "./printer/run-test-print.js";
 import { startLocalHttpServer, type LocalHttpServer } from "./local/http-server.js";
 import { AgentRuntime, setAgentRuntime } from "./runtime/agent-runtime.js";
+import { startOtaScheduler, stopOtaScheduler } from "./update/ota-scheduler.js";
 import "./printer/encodings-ensure.js";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
@@ -166,6 +167,8 @@ async function runAgent(options: { dryRun?: boolean } = {}): Promise<void> {
     logger.warn(`[MJH] Local API failed to start: ${message}`, "STARTUP");
   }
 
+  startOtaScheduler();
+
   let shuttingDown = false;
   const shutdown = async () => {
     if (shuttingDown) {
@@ -173,6 +176,7 @@ async function runAgent(options: { dryRun?: boolean } = {}): Promise<void> {
     }
     shuttingDown = true;
     logger.info("[MJH] Shutting down...", "SHUTDOWN");
+    stopOtaScheduler();
     try {
       await runtime.shutdown();
     } catch {

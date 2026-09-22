@@ -36,6 +36,19 @@ export type UpdateCheck = {
   notes: string | null;
 };
 
+export type UpdateStatus = {
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+  downloaded: boolean;
+  ready: boolean;
+  notes: string | null;
+  mandatory: boolean;
+  lastCheckAt: string | null;
+  lastError: string | null;
+  remoteEnabled: boolean;
+};
+
 export type DiscoverHit = {
   ip: string;
   port: number;
@@ -109,8 +122,14 @@ export const localAgent = {
       body: JSON.stringify({ ip, port }),
     }),
   checkUpdate: () => request<UpdateCheck>("/local/update/check"),
+  updateStatus: () => request<UpdateStatus>("/local/update/status"),
+  downloadUpdate: () =>
+    request<{ ok: boolean; message?: string; error?: string }>("/local/update/download", {
+      method: "POST",
+      body: "{}",
+    }),
   applyUpdate: () =>
-    request<{ ok: boolean; message?: string; error?: string }>("/local/update", {
+    request<{ ok: boolean; message?: string; error?: string }>("/local/update/apply", {
       method: "POST",
       body: "{}",
     }),

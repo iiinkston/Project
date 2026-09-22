@@ -5,7 +5,10 @@ import {
   handleLocalLogs,
   handleLocalStatus,
   handleLocalUpdate,
+  handleLocalUpdateApply,
   handleLocalUpdateCheck,
+  handleLocalUpdateDownload,
+  handleLocalUpdateStatus,
   handlePrinterConfig,
   handlePrinterDiscover,
   handlePrinterTest,
@@ -131,7 +134,21 @@ export async function startLocalHttpServer(options?: {
         return;
       }
       if (req.method === "GET" && path === "/local/update/check") {
-        sendJson(res, 200, handleLocalUpdateCheck());
+        sendJson(res, 200, await handleLocalUpdateCheck());
+        return;
+      }
+      if (req.method === "GET" && path === "/local/update/status") {
+        sendJson(res, 200, handleLocalUpdateStatus());
+        return;
+      }
+      if (req.method === "POST" && path === "/local/update/download") {
+        const result = await handleLocalUpdateDownload();
+        sendJson(res, result.ok ? 200 : 400, result);
+        return;
+      }
+      if (req.method === "POST" && path === "/local/update/apply") {
+        const result = handleLocalUpdateApply();
+        sendJson(res, result.ok ? 202 : 400, result);
         return;
       }
       if (req.method === "POST" && path === "/local/update") {
