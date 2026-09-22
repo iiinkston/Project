@@ -38,6 +38,7 @@ export function App() {
   const [wizardStart, setWizardStart] = useState<1 | 3>(1);
   const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [clientUpdate, setClientUpdate] = useState<ClientUpdateCheckResult | null>(null);
   const [clientVersion, setClientVersion] = useState<string>("1.0.0");
 
   const refresh = useCallback(async () => {
@@ -180,7 +181,7 @@ export function App() {
   }
 
   async function onCheckUpdate() {
-    setBusy("正在检查更新…");
+    setBusy("正在检查 Agent 更新…");
     setToast(null);
     try {
       const info = await localAgent.checkUpdate();
@@ -189,8 +190,8 @@ export function App() {
       setUpdateStatus(st);
       setToast(
         info.updateAvailable
-          ? `发现新版本 ${info.latestVersion}`
-          : `已是最新（${info.currentVersion}）`,
+          ? `Agent 发现新版本 ${info.latestVersion}`
+          : `Agent 已是最新（${info.currentVersion}）`,
       );
     } catch (e) {
       setToast(e instanceof Error ? e.message : String(e));
@@ -200,13 +201,13 @@ export function App() {
   }
 
   async function onDownloadUpdate() {
-    setBusy("正在下载更新…");
+    setBusy("正在下载 Agent 更新…");
     setToast(null);
     try {
       const r = await localAgent.downloadUpdate();
       const st = await localAgent.updateStatus();
       setUpdateStatus(st);
-      setToast(r.ok ? r.message || "下载完成" : r.error || "下载失败");
+      setToast(r.ok ? r.message || "Agent 下载完成" : r.error || "Agent 下载失败");
     } catch (e) {
       setToast(e instanceof Error ? e.message : String(e));
     } finally {
@@ -219,8 +220,65 @@ export function App() {
     setToast(null);
     try {
       const r = await localAgent.applyUpdate();
-      setToast(r.ok ? r.message || "更新已启动，请稍候" : r.error || "更新失败");
+      setToast(r.ok ? r.message || "Agent 更新已启动，请稍候" : r.error || "Agent 更新失败");
       setTimeout(() => void refresh(), 8000);
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onCheckClientUpdate() {
+    setBusy("正在检查 Client 更新…");
+    setToast(null);
+    try {
+      if (!window.mjhDesktop?.clientUpdateCheck) {
+        throw new Error("当前环境不支持 Client OTA（请使用安装版）");
+      }
+      const info = await window.mjhDesktop.clientUpdateCheck();
+      setClientUpdate(info);
+      setToast(
+        info.updateAvailable
+          ? `Client 发现新版本 ${info.latestVersion}`
+          : info.remoteEnabled
+            ? `Client 已是最新（${info.currentVersion}）`
+            : "Client OTA 未启用（请配置 update.json）",
+      );
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onDownloadClientUpdate() {
+    setBusy("正在下载 Client Setup…");
+    setToast(null);
+    try {
+      if (!window.mjhDesktop?.clientUpdateDownload) {
+        throw new Error("当前环境不支持 Client OTA");
+      }
+      const r = await window.mjhDesktop.clientUpdateDownload();
+      const info = await window.mjhDesktop.clientUpdateCheck?.();
+      if (info) setClientUpdate(info);
+      setToast(r.ok ? r.message || "Client 下载完成" : r.error || "Client 下载失败");
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function onApplyClientUpdate() {
+    setBusy("正在安装 Client 更新…");
+    setToast(null);
+    try {
+      if (!window.mjhDesktop?.clientUpdateApply) {
+        throw new Error("当前环境不支持 Client OTA");
+      }
+      const r = await window.mjhDesktop.clientUpdateApply();
+      setToast(r.ok ? r.message || "安装已启动" : r.error || "安装失败");
     } catch (e) {
       setToast(e instanceof Error ? e.message : String(e));
     } finally {
@@ -460,7 +518,7 @@ export function App() {
           <section className="card">
             <h2>Agent 更新</h2>
             <p className="hint">
-              检查远程版本、下载到本机后安装。不会强制更新；安装仍由本机 update-agent.ps1 完成。
+              经本机 Agent Local API 检查/下载/安装。安装由 update-agent.ps1 完成，不强制更新。
             </p>
             <div className="grid" style={{ marginTop: 12 }}>
               <div>
@@ -481,7 +539,7 @@ export function App() {
             </div>
             {(updateStatus?.updateAvailable || updateInfo?.updateAvailable) && (
               <p className="sub" style={{ marginTop: 12 }}>
-                有新版本可用：
+                Agent 有新版本：
                 {updateStatus?.latestVersion ?? updateInfo?.latestVersion}
                 {updateStatus?.ready ? "（已下载，可安装）" : ""}
               </p>
@@ -494,7 +552,7 @@ export function App() {
             )}
             {updateStatus?.lastError && (
               <p className="hint" role="alert">
-                更新错误：{updateStatus.lastError}
+                Agent 更新错误：{updateStatus.lastError}
               </p>
             )}
             <div className="actions" style={{ marginTop: 16 }}>
@@ -503,7 +561,7 @@ export function App() {
                 disabled={!agentUp || !!busy}
                 onClick={() => void onCheckUpdate()}
               >
-                检查更新
+                检查 Agent 更新
               </button>
               <button
                 disabled={
@@ -514,11 +572,68 @@ export function App() {
                 }
                 onClick={() => void onDownloadUpdate()}
               >
-                下载更新
+                下载 Agent
               </button>
               <button
                 disabled={!agentUp || !!busy || !updateStatus?.ready}
                 onClick={() => void onApplyUpdate()}
+              >
+                安装 Agent
+              </button>
+            </div>
+          </section>
+
+          <section className="card">
+            <h2>Client 更新</h2>
+            <p className="hint">
+              下载 NSIS Setup.exe 后静默升级，不直接覆盖正在运行的 Electron exe。不会强制更新。
+            </p>
+            <div className="grid" style={{ marginTop: 12 }}>
+              <div>
+                <div className="label">当前版本</div>
+                <div className="value">{clientUpdate?.currentVersion ?? clientVersion}</div>
+              </div>
+              <div>
+                <div className="label">最新版本</div>
+                <div className="value">{clientUpdate?.latestVersion ?? "—"}</div>
+              </div>
+            </div>
+            {clientUpdate?.updateAvailable && (
+              <p className="sub" style={{ marginTop: 12 }}>
+                Client 有新版本：{clientUpdate.latestVersion}
+                {clientUpdate.ready ? "（已下载，可安装）" : ""}
+              </p>
+            )}
+            {clientUpdate?.notes && (
+              <div style={{ marginTop: 12 }}>
+                <div className="label">更新说明</div>
+                <p className="sub">{clientUpdate.notes}</p>
+              </div>
+            )}
+            {clientUpdate?.lastError && (
+              <p className="hint" role="alert">
+                Client 更新错误：{clientUpdate.lastError}
+              </p>
+            )}
+            <div className="actions" style={{ marginTop: 16 }}>
+              <button
+                className="primary"
+                disabled={!!busy}
+                onClick={() => void onCheckClientUpdate()}
+              >
+                检查 Client 更新
+              </button>
+              <button
+                disabled={
+                  !!busy || !clientUpdate?.updateAvailable || Boolean(clientUpdate?.ready)
+                }
+                onClick={() => void onDownloadClientUpdate()}
+              >
+                下载更新
+              </button>
+              <button
+                disabled={!!busy || !clientUpdate?.ready}
+                onClick={() => void onApplyClientUpdate()}
               >
                 安装更新
               </button>

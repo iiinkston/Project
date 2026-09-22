@@ -1,6 +1,7 @@
 const { app, BrowserWindow, shell, Tray, Menu, nativeImage, ipcMain } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
+const { createClientUpdateService } = require("./client-update-service.cjs");
 
 /** Fallback tiny 16×16 green circle PNG (base64). */
 const TRAY_ICON_DATA_URL =
@@ -8,6 +9,7 @@ const TRAY_ICON_DATA_URL =
 
 let mainWindow = null;
 let tray = null;
+let clientUpdate = null;
 app.isQuitting = false;
 
 function clientLogDir() {
@@ -223,6 +225,36 @@ function configureAutoLaunch() {
 app.whenReady().then(() => {
   logLine(`app ready version=${app.getVersion()} exec=${process.execPath}`);
   configureAutoLaunch();
+  clientUpdate = createClientUpdateService({ app, log: logLine });
+  // Seed default Client OTA config once (disabled until manifestUrl is set).
+  try {
+    const cfg = clientUpdate.configPath();
+    if (!fs.existsSync(cfg)) {
+      const template = path.join(__dirname, "..", "config", "client-update.json");
+      fs.mkdirSync(path.dirname(cfg), { recursive: true });
+      if (fs.existsSync(template)) {
+        fs.copyFileSync(template, cfg);
+      } else {
+        fs.writeFileSync(
+          cfg,
+          `${JSON.stringify(
+            {
+              enabled: false,
+              channel: "stable",
+              manifestUrl: "",
+              checkIntervalMinutes: 360,
+            },
+            null,
+            2,
+          )}\n`,
+          "utf8",
+        );
+      }
+      logLine(`seeded client OTA config ${cfg}`);
+    }
+  } catch (err) {
+    logLine(`seed client OTA config failed ${err}`);
+  }
   createWindow();
   createTray();
   const startInTray = process.argv.includes("--tray");
@@ -236,6 +268,25 @@ app.whenReady().then(() => {
       .replace(/("token"\s*:\s*")[^"]*"/gi, '$1***')
       .slice(0, 500);
     logLine(text);
+  });
+  ipcMain.handle("client:update:check", async () => {
+    if (!clientUpdate) throw new Error("client update service not ready");
+    return clientUpdate.check();
+  });
+  ipcMain.handle("client:update:download", async () => {
+    if (!clientUpdate) throw new Error("client update service not ready");
+    return clientUpdate.download();
+  });
+  ipcMain.handle("client:update:apply", async () => {
+    if (!clientUpdate) throw new Error("client update service not ready");
+    const result = await clientUpdate.apply();
+    if (result.ok && result.quitting) {
+      setTimeout(() => {
+        app.isQuitting = true;
+        app.quit();
+      }, 400);
+    }
+    return result;
   });
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
