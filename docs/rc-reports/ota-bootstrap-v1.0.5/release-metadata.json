@@ -1,0 +1,13 @@
+﻿{
+    "clientVersion":  "1.0.5",
+    "agentVersion":  "2.4.5",
+    "clientSha256":  "38a215f6efda13b1444f51c7250e0510c94be383d254646c2631fc5d781dfdbd",
+    "agentSha256":  "5783fe1d2928831ca973a5a680b0e47666a5405fa276a6acd8708fcb49512e8f",
+    "assets":  {
+                   "clientSetup":  "MJH-Printer-Setup.exe",
+                   "agentZip":  "MJH-Printer-Agent-v2.4.5.zip"
+               },
+    "repository":  "iiinkston/Project",
+    "tag":  "v1.0.5",
+    "publishedAt":  "2026-09-22T06:49:18.2792412Z"
+}
