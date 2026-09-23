@@ -1,6 +1,6 @@
 {
   "name": "mjh-printer-client",
-  "version": "1.0.8",
+  "version": "1.0.12",
   "private": true,
   "description": "满江红打印助手 — Windows GUI Control Plane for MJH Printer Agent",
   "author": "满江红",
@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "electron:dev": "concurrently -k -n vite,electron -c cyan,magenta \"vite\" \"wait-on http://127.0.0.1:5173 && node scripts/start-electron.mjs\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test electron/client-update-lib.test.cjs electron/client-update-elevation.test.cjs electron/stability-lib.test.cjs",
+    "test": "node --test electron/client-update-lib.test.cjs electron/client-update-elevation.test.cjs electron/client-update-lifecycle.test.cjs electron/client-ota-regression-1.0.13.test.cjs electron/stability-lib.test.cjs",
     "dist:win": "pnpm build && electron-builder --win --x64 --dir",
     "dist:setup": "pnpm build && node installer/stage-agent.mjs && electron-builder --win --x64",
     "dist:all": "pnpm dist:win && node installer/copy-client-artifact.mjs"
@@ -47,11 +47,21 @@
       {
         "from": "installer/agent-release",
         "to": "agent-release",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "scripts/update-client.ps1",
         "to": "updater/update-client.ps1"
+      },
+      {
+        "from": "scripts/client-update-lifecycle.ps1",
+        "to": "updater/client-update-lifecycle.ps1"
+      },
+      {
+        "from": "scripts/launch-client-after-install.ps1",
+        "to": "updater/launch-client-after-install.ps1"
       },
       {
         "from": "scripts/apply-client-update-helper.ps1",
@@ -70,7 +80,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "signAndEditExecutable": false,
@@ -82,7 +94,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "满江红打印助手",
-      "runAfterFinish": true,
+      "runAfterFinish": false,
       "include": "installer/nsis-agent.nsh",
       "artifactName": "MJH Printer Setup.${ext}"
     },

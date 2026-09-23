@@ -18,6 +18,9 @@
     nsExec::ExecToLog '"$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\updater\register-client-ota-task.ps1"'
     Pop $1
     DetailPrint "Client OTA task register (sysnative) exit: $1"
+    nsExec::ExecToLog '"$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\updater\launch-client-after-install.ps1"'
+    Pop $2
+    DetailPrint "Client interactive launch (sysnative) exit: $2"
     Goto install_done
   use_system32:
     nsExec::ExecToLog '"$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\agent-release\install.ps1"'
@@ -26,6 +29,9 @@
     nsExec::ExecToLog '"$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\updater\register-client-ota-task.ps1"'
     Pop $1
     DetailPrint "Client OTA task register (system32) exit: $1"
+    nsExec::ExecToLog '"$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\updater\launch-client-after-install.ps1"'
+    Pop $2
+    DetailPrint "Client interactive launch (system32) exit: $2"
   install_done:
 !macroend
 

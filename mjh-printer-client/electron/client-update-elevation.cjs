@@ -62,7 +62,7 @@ function tryStartUpdateScheduledTask(taskName = CLIENT_UPDATE_TASK_NAME) {
   }
 }
 
-function startUpdateDirect(scriptPath, setupPath, oldVersion, newVersion) {
+function startUpdateDirect(scriptPath, setupPath, oldVersion, newVersion, expectedSha256) {
   const args = [
     "-NoProfile",
     "-ExecutionPolicy",
@@ -74,6 +74,7 @@ function startUpdateDirect(scriptPath, setupPath, oldVersion, newVersion) {
   ];
   if (oldVersion) args.push("-OldVersion", oldVersion);
   if (newVersion) args.push("-NewVersion", newVersion);
+  if (expectedSha256) args.push("-ExpectedSha256", expectedSha256);
   const child = spawn("powershell.exe", args, {
     detached: true,
     stdio: "ignore",
@@ -83,7 +84,7 @@ function startUpdateDirect(scriptPath, setupPath, oldVersion, newVersion) {
   return child.pid || null;
 }
 
-function startUpdateViaUacRunAs(scriptPath, setupPath, oldVersion, newVersion) {
+function startUpdateViaUacRunAs(scriptPath, setupPath, oldVersion, newVersion, expectedSha256) {
   const argParts = [
     "-NoProfile",
     "-ExecutionPolicy",
@@ -98,6 +99,9 @@ function startUpdateViaUacRunAs(scriptPath, setupPath, oldVersion, newVersion) {
   }
   if (newVersion) {
     argParts.push("-NewVersion", newVersion);
+  }
+  if (expectedSha256) {
+    argParts.push("-ExpectedSha256", expectedSha256);
   }
   const psArgs = argParts.map((a) => psSingleQuote(a)).join(",");
   const elevateCmd =
@@ -126,6 +130,7 @@ function launchElevatedClientUpdateApply(options) {
   const startUac = options.startUac ?? startUpdateViaUacRunAs;
   const oldVersion = options.oldVersion || "";
   const newVersion = options.newVersion || "";
+  const expectedSha256 = options.expectedSha256 || "";
 
   if (!fs.existsSync(options.scriptPath)) {
     return { ok: false, error: "未找到 update-client.ps1" };
@@ -141,6 +146,7 @@ function launchElevatedClientUpdateApply(options) {
       script: options.scriptPath,
       oldVersion,
       newVersion,
+      expectedSha256: expectedSha256 || undefined,
       requestedAt: new Date().toISOString(),
     },
     programDataRoot,
@@ -152,6 +158,7 @@ function launchElevatedClientUpdateApply(options) {
       timestamp: new Date().toISOString(),
       oldVersion,
       newVersion,
+      expectedSha256: expectedSha256 || undefined,
       installerPath: options.setupPath,
       scriptPath: options.scriptPath,
       elevated,
@@ -160,7 +167,13 @@ function launchElevatedClientUpdateApply(options) {
   );
 
   if (elevated) {
-    const pid = startDirect(options.scriptPath, options.setupPath, oldVersion, newVersion);
+    const pid = startDirect(
+      options.scriptPath,
+      options.setupPath,
+      oldVersion,
+      newVersion,
+      expectedSha256,
+    );
     writeInstallerStartEvent(
       {
         event: "CLIENT_APPLY_MODE",
@@ -192,7 +205,13 @@ function launchElevatedClientUpdateApply(options) {
   }
 
   try {
-    const pid = startUac(options.scriptPath, options.setupPath, oldVersion, newVersion);
+    const pid = startUac(
+      options.scriptPath,
+      options.setupPath,
+      oldVersion,
+      newVersion,
+      expectedSha256,
+    );
     writeInstallerStartEvent(
       {
         event: "CLIENT_APPLY_MODE",

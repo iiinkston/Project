@@ -316,6 +316,7 @@ function createClientUpdateService(deps) {
       setupPath,
       oldVersion: currentVersion,
       newVersion,
+      expectedSha256: state.remoteSha256 || "",
       ...(typeof deps.isElevated === "function"
         ? { elevated: deps.isElevated() }
         : {}),

@@ -171,9 +171,41 @@ jobs:
         run: pnpm install --frozen-lockfile
 
 
+      # Inject Client package.json version from git tag (workspace only; not committed).
+      # electron-builder / Vite read this for Setup ProductVersion and asar package.json.
+      - name: Inject Client version from git tag
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "${{ github.ref_name }}"
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\scripts\set-client-version-from-tag.ps1" `
+            -Tag $tag `
+            -WorkspaceRoot $env:GITHUB_WORKSPACE
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $ver = node -p "require(process.argv[1]).version" "$env:GITHUB_WORKSPACE\mjh-printer-client\package.json"
+          Write-Host "CLIENT_PACKAGE_JSON_VERSION=$ver"
+          if ($ver -ne "${{ steps.ver.outputs.client_version }}") {
+            throw "Injected package.json version='$ver' != tag client_version='${{ steps.ver.outputs.client_version }}'"
+          }
+
+
       - name: Client dist setup
         working-directory: mjh-printer-client
         run: pnpm dist:setup
+
+
+      - name: Validate Client Setup ProductVersion
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $clientVersion = "${{ steps.ver.outputs.client_version }}"
+          $setupSrc = "$env:GITHUB_WORKSPACE\dist\client-build\MJH Printer Setup.exe"
+          $asarPath = "$env:GITHUB_WORKSPACE\dist\client-build\win-unpacked\resources\app.asar"
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\scripts\validate-client-build-version.ps1" `
+            -ExpectedVersion $clientVersion `
+            -SetupPath $setupSrc `
+            -AsarPath $asarPath
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 
 
@@ -229,6 +261,13 @@ jobs:
           if (!(Test-Path $agentZipSrc)) {
             throw "Missing agent zip"
           }
+
+          # Re-validate Setup ProductVersion before publishing metadata
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$ws\scripts\validate-client-build-version.ps1" `
+            -ExpectedVersion $clientVersion `
+            -SetupPath $setupSrc `
+            -AsarPath "$ws\dist\client-build\win-unpacked\resources\app.asar"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 
 

@@ -25,6 +25,14 @@ if (Test-Path -LiteralPath $pkgHelper) {
   if (Test-Path -LiteralPath $updSrc) {
     Copy-Item -Force $updSrc (Join-Path $UpdaterDir "update-client.ps1")
   }
+  $lifeSrc = Join-Path $here "client-update-lifecycle.ps1"
+  if (Test-Path -LiteralPath $lifeSrc) {
+    Copy-Item -Force $lifeSrc (Join-Path $UpdaterDir "client-update-lifecycle.ps1")
+  }
+  $launchSrc = Join-Path $here "launch-client-after-install.ps1"
+  if (Test-Path -LiteralPath $launchSrc) {
+    Copy-Item -Force $launchSrc (Join-Path $UpdaterDir "launch-client-after-install.ps1")
+  }
 }
 
 if (-not (Test-Path -LiteralPath $HelperScript)) {

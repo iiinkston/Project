@@ -45,6 +45,8 @@ if (-not $setupPath) { $setupPath = [string]$req.source }
 $script = [string]$req.script
 $oldVersion = [string]$req.oldVersion
 $newVersion = [string]$req.newVersion
+$expectedSha256 = [string]$req.expectedSha256
+if (-not $expectedSha256) { $expectedSha256 = [string]$req.sha256 }
 
 if (-not $setupPath -or -not (Test-Path -LiteralPath $setupPath)) {
   Write-HelperLog "ERROR: Setup missing: $setupPath"
@@ -65,13 +67,30 @@ if (-not (Test-Path -LiteralPath $script)) {
   exit 5
 }
 
-Write-HelperLog "Running update-client.ps1 SetupPath=$setupPath old=$oldVersion new=$newVersion"
+# Ensure lifecycle helper sits next to update-client.ps1 (dot-source)
+$lifeName = "client-update-lifecycle.ps1"
+$lifeDst = Join-Path (Split-Path -Parent $script) $lifeName
+$lifeSrcCandidates = @(
+  (Join-Path $UpdaterDir $lifeName),
+  (Join-Path $PSScriptRoot $lifeName)
+)
+if (-not (Test-Path -LiteralPath $lifeDst)) {
+  foreach ($c in $lifeSrcCandidates) {
+    if ($c -and (Test-Path -LiteralPath $c)) {
+      Copy-Item -Force $c $lifeDst
+      break
+    }
+  }
+}
+
+Write-HelperLog "Running update-client.ps1 SetupPath=$setupPath old=$oldVersion new=$newVersion sha=$expectedSha256"
 $argList = @(
   "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $script,
   "-SetupPath", $setupPath
 )
 if ($oldVersion) { $argList += @("-OldVersion", $oldVersion) }
 if ($newVersion) { $argList += @("-NewVersion", $newVersion) }
+if ($expectedSha256) { $argList += @("-ExpectedSha256", $expectedSha256) }
 
 & powershell.exe @argList
 $code = $LASTEXITCODE
