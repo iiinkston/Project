@@ -1,10 +1,7 @@
 # Set mjh-printer-client/package.json version from git tag (CI workspace only; do not commit).
 # Usage:
-#   .\scripts\set-client-version-from-tag.ps1 -Tag v1.0.12
-#   .\scripts\set-client-version-from-tag.ps1 -Tag v1.0.12 -WorkspaceRoot D:\Project
-#
-# stdout: JSON only { "tag","clientVersion","previousVersion","packageJson" }
-# stderr: diagnostics
+#   .\scripts\set-client-version-from-tag.ps1 -Tag v1.0.13
+# stdout: JSON only
 
 param(
   [Parameter(Mandatory = $true)][string]$Tag,
@@ -37,37 +34,14 @@ if ($clientVersion -notmatch '^\d+\.\d+\.\d+$') {
 $pkgPath = Join-Path $WorkspaceRoot "mjh-printer-client\package.json"
 if (-not (Test-Path -LiteralPath $pkgPath)) { Fail "missing $pkgPath" }
 
-$tmpJs = Join-Path $env:TEMP ("mjh-set-client-ver-" + [guid]::NewGuid().ToString("n") + ".js")
-$js = @"
-const fs = require("fs");
-const p = process.argv[2];
-const ver = process.argv[3];
-const pkg = JSON.parse(fs.readFileSync(p, "utf8"));
-const previous = String(pkg.version || "");
-pkg.version = ver;
-fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + "\n", "utf8");
-const check = JSON.parse(fs.readFileSync(p, "utf8"));
-if (String(check.version) !== ver) {
-  console.error("write verify failed: " + check.version);
-  process.exit(2);
-}
-process.stdout.write(JSON.stringify({ previousVersion: previous, clientVersion: ver }));
-"@
-try {
-  [System.IO.File]::WriteAllText($tmpJs, $js, (New-Object System.Text.UTF8Encoding $false))
-  $nodeOut = & node $tmpJs $pkgPath $clientVersion
-  if ($LASTEXITCODE -ne 0) { Fail "node failed to write package.json" }
-} finally {
-  Remove-Item -LiteralPath $tmpJs -Force -ErrorAction SilentlyContinue
-}
+$patcher = Join-Path $PSScriptRoot "patch-client-package-version.cjs"
+$nodeOut = & node $patcher --version $clientVersion --package $pkgPath
+if ($LASTEXITCODE -ne 0) { Fail "patch-client-package-version.cjs failed" }
 
 $nodeInfo = $nodeOut | ConvertFrom-Json
-$previous = [string]$nodeInfo.previousVersion
-
-[Console]::Error.WriteLine("SET_CLIENT_VERSION_OK $previous -> $clientVersion ($pkgPath)")
 [Console]::Out.WriteLine((@{
   tag             = $Tag
   clientVersion   = $clientVersion
-  previousVersion = $previous
+  previousVersion = [string]$nodeInfo.previousVersion
   packageJson     = $pkgPath
 } | ConvertTo-Json -Compress))

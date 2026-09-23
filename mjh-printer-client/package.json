@@ -14,7 +14,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test electron/client-update-lib.test.cjs electron/client-update-elevation.test.cjs electron/client-update-lifecycle.test.cjs electron/client-ota-regression-1.0.13.test.cjs electron/stability-lib.test.cjs",
     "dist:win": "pnpm build && electron-builder --win --x64 --dir",
-    "dist:setup": "pnpm build && node installer/stage-agent.mjs && electron-builder --win --x64",
+    "dist:setup": "node ../scripts/ensure-client-package-version.cjs && pnpm build && node installer/stage-agent.mjs && electron-builder --win --x64",
     "dist:all": "pnpm dist:win && node installer/copy-client-artifact.mjs"
   },
   "dependencies": {

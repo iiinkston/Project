@@ -172,25 +172,37 @@ jobs:
 
 
       # Inject Client package.json version from git tag (workspace only; not committed).
-      # electron-builder / Vite read this for Setup ProductVersion and asar package.json.
+      # Must update the real package.json that electron-builder packs into app.asar.
       - name: Inject Client version from git tag
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $tag = "${{ github.ref_name }}"
+          $expected = "${{ steps.ver.outputs.client_version }}"
+          $pkg = Join-Path $env:GITHUB_WORKSPACE "mjh-printer-client\package.json"
+
+          $before = node -p "require(process.argv[1]).version" $pkg
+          Write-Host "BEFORE_PATCH_VERSION=$before"
+
           & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\scripts\set-client-version-from-tag.ps1" `
             -Tag $tag `
             -WorkspaceRoot $env:GITHUB_WORKSPACE
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $ver = node -p "require(process.argv[1]).version" "$env:GITHUB_WORKSPACE\mjh-printer-client\package.json"
-          Write-Host "CLIENT_PACKAGE_JSON_VERSION=$ver"
-          if ($ver -ne "${{ steps.ver.outputs.client_version }}") {
-            throw "Injected package.json version='$ver' != tag client_version='${{ steps.ver.outputs.client_version }}'"
-          }
 
+          $after = node -p "require(process.argv[1]).version" $pkg
+          Write-Host "AFTER_PATCH_VERSION=$after"
+          Write-Host "---- mjh-printer-client/package.json (version lines) ----"
+          Select-String -Path $pkg -Pattern '"version"' | ForEach-Object { $_.Line.Trim() }
+
+          if ($after -ne $expected) {
+            throw "Injected package.json version='$after' != tag client_version='$expected'"
+          }
 
       - name: Client dist setup
         working-directory: mjh-printer-client
+        env:
+          # Re-assert / re-patch immediately before build+electron-builder (app.asar source of truth)
+          MJH_RELEASE_CLIENT_VERSION: ${{ steps.ver.outputs.client_version }}
         run: pnpm dist:setup
 
 
