@@ -168,21 +168,27 @@ if ($exitCode -ne 0) {
 Start-Sleep -Seconds 2
 Stop-MjhSession0ClientProcesses -Log $logSb
 
-$assert = Assert-MjhClientInstalled `
+# Wait until installed files reflect targetVersion (NSIS may finish before asar is fully visible).
+$assert = Wait-MjhInstalledClientVersion `
   -InstallDir $InstallDir `
   -ClientExe $ClientExe `
   -TargetVersion $NewVersion `
+  -RetryCount 10 `
+  -RetryIntervalSeconds 2 `
   -Log $logSb
 
 Write-UpdateLog ("installedPath={0}" -f $assert.installedPath)
 Write-UpdateLog ("installedVersion={0}" -f ($(if ($assert.installedVersion) { $assert.installedVersion } else { "(unknown)" })))
+Write-UpdateLog ("versionVerifyAttempts={0}" -f $assert.attempts)
 
 if (-not $assert.ok) {
-  Fail-Update ("verify_failed:{0}" -f $assert.error) 10
+  $reason = if ($assert.error) { [string]$assert.error } else { "INSTALLED_VERSION_MISMATCH" }
+  if ($assert.detail) { $reason = "$reason $($assert.detail)" }
+  Fail-Update $reason 10
 }
 
 if ([string]$assert.installedVersion -ne $NewVersion) {
-  Fail-Update ("version_mismatch installed={0} target={1}" -f $assert.installedVersion, $NewVersion) 10
+  Fail-Update ("INSTALLED_VERSION_MISMATCH expected={0} actual={1}" -f $NewVersion, $assert.installedVersion) 10
 }
 
 Write-UpdateLog "postInstallVerify=PASS"

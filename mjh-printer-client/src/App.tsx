@@ -3,6 +3,7 @@ import {
   localAgent,
   type DiscoverHit,
   type LocalStatus,
+  type NetworkDiagnostics,
   type UpdateCheck,
   type UpdateStatus,
 } from "./api/localAgent";
@@ -31,6 +32,7 @@ export function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [discovered, setDiscovered] = useState<DiscoverHit[]>([]);
+  const [network, setNetwork] = useState<NetworkDiagnostics | null>(null);
   const [ipDraft, setIpDraft] = useState("");
   const [portDraft, setPortDraft] = useState("9100");
   const [toast, setToast] = useState<string | null>(null);
@@ -89,6 +91,12 @@ export function App() {
   }, [refresh, showWizard]);
 
   useEffect(() => {
+    if (tab !== "printer" || !agentUp) return;
+    void refreshNetwork();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, agentUp]);
+
+  useEffect(() => {
     const baked =
       typeof __MJH_CLIENT_VERSION__ !== "undefined" ? __MJH_CLIENT_VERSION__ : "1.0.0";
     setClientVersion(baked);
@@ -135,13 +143,36 @@ export function App() {
     }
   }
 
+  async function refreshNetwork() {
+    try {
+      const n = await localAgent.network();
+      setNetwork(n);
+    } catch {
+      setNetwork(null);
+    }
+  }
+
   async function onDiscover() {
     setBusy("正在扫描局域网 :9100…");
     setToast(null);
     try {
       const r = await localAgent.discover();
       setDiscovered(r.printers);
-      setToast(`扫描完成：${r.subnet}，发现 ${r.printers.length} 台`);
+      setNetwork({
+        adapterName: r.adapterName ?? null,
+        ipv4: r.ipv4 ?? "",
+        subnet: r.subnet,
+        gateway: r.gateway ?? null,
+        scanFrom: r.scanFrom ?? "",
+        scanTo: r.scanTo ?? "",
+      });
+      if (r.printers.length === 0) {
+        setToast(
+          `扫描完成：${r.subnet}，未发现 TCP 9100。可在 PowerShell 验证：Test-NetConnection <打印机IP> -Port 9100`,
+        );
+      } else {
+        setToast(`扫描完成：${r.subnet}，发现 ${r.printers.length} 台`);
+      }
     } catch (e) {
       setToast(e instanceof Error ? e.message : String(e));
     } finally {
@@ -461,7 +492,7 @@ export function App() {
             <h2>当前打印机</h2>
             <label className="field">
               <span>IP</span>
-              <input value={ipDraft} onChange={(e) => setIpDraft(e.target.value)} />
+              <input value={ipDraft} onChange={(e) => setIpDraft(e.target.value)} placeholder="请先扫描并选择打印机" />
             </label>
             <label className="field">
               <span>端口</span>
@@ -473,9 +504,42 @@ export function App() {
           </section>
 
           <section className="card">
+            <h2>本机网络</h2>
+            <p className="hint">根据当前 Windows 网卡自动识别（不写死门店网段）</p>
+            <div className="label">本机 IPv4</div>
+            <div className="value">{network?.ipv4 || "—"}</div>
+            <div className="label" style={{ marginTop: 8 }}>
+              检测网段
+            </div>
+            <div className="value">{network?.subnet || "—"}</div>
+            <div className="label" style={{ marginTop: 8 }}>
+              默认网关
+            </div>
+            <div className="value">{network?.gateway || "—"}</div>
+            <button
+              style={{ marginTop: 12 }}
+              disabled={!agentUp || !!busy}
+              onClick={() => void refreshNetwork()}
+            >
+              刷新网络信息
+            </button>
+          </section>
+
+          <section className="card">
             <h2>自动发现</h2>
-            <p className="hint">扫描本机网段 TCP 9100（厨房 ESC/POS · XP-N160II）</p>
-            <button disabled={!agentUp || !!busy} onClick={() => void onDiscover()}>
+            <p className="hint">
+              扫描当前网段 TCP 9100（厨房 ESC/POS · XP-N160II）
+              {network?.scanFrom && network?.scanTo
+                ? ` · ${network.scanFrom}–${network.scanTo}`
+                : ""}
+            </p>
+            <button
+              disabled={!agentUp || !!busy}
+              onClick={() => {
+                void refreshNetwork();
+                void onDiscover();
+              }}
+            >
               扫描打印机
             </button>
             <ul className="list">

@@ -68,11 +68,28 @@ export type LocalDiscoverHit = {
   reachable: true;
 };
 
+/** Active LAN diagnostics for Printer Settings / discover (never hard-coded store subnet). */
+export type LanDiagnostics = {
+  adapterName: string | null;
+  ipv4: string;
+  subnet: string;
+  gateway: string | null;
+  scanFrom: string;
+  scanTo: string;
+};
+
 export type LocalDiscoverResponse = {
   subnet: string;
   scanned: number;
   printers: LocalDiscoverHit[];
+  adapterName?: string | null;
+  ipv4?: string;
+  gateway?: string | null;
+  scanFrom?: string;
+  scanTo?: string;
 };
+
+export type LocalNetworkResponse = LanDiagnostics;
 
 export type LocalPrinterConfigBody = {
   ip: string;

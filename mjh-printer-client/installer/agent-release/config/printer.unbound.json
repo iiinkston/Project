@@ -9,7 +9,7 @@
   "printer": {
     "name": "Kitchen",
     "model": "XP-N160II",
-    "ip": "192.168.0.110",
+    "ip": "",
     "port": 9100,
     "encoding": "gb18030",
     "connectTimeoutMs": 3000

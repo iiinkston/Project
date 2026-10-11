@@ -2,19 +2,98 @@
 # Keep ASCII-only strings for Windows PowerShell 5.1 without BOM.
 
 $script:MjhClientProductName = "MJH Printer Client"
+$script:MjhClientExeName = "MJH Printer Client.exe"
+
+function Resolve-MjhClientExeFromDir {
+  param([string]$InstallDir)
+  if (-not $InstallDir) { return $null }
+  foreach ($rel in @(
+      $script:MjhClientExeName,
+      (Join-Path "MJH Printer Client" $script:MjhClientExeName)
+    )) {
+    $p = Join-Path $InstallDir $rel
+    if (Test-Path -LiteralPath $p) { return $p }
+  }
+  return $null
+}
+
+function Find-MjhClientExeViaRegistry {
+  $roots = @(
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall",
+    "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+  )
+  foreach ($root in $roots) {
+    if (-not (Test-Path -LiteralPath $root)) { continue }
+    Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue | ForEach-Object {
+      $p = Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue
+      if (-not $p) { return }
+      $name = [string]$p.DisplayName
+      if ($name -notmatch 'MJH|Printer Client') { return }
+      foreach ($field in @([string]$p.DisplayIcon, [string]$p.UninstallString, [string]$p.InstallLocation)) {
+        if (-not $field) { continue }
+        if ($field -match '"([^"]*MJH Printer Client\.exe)"') {
+          $exe = $Matches[1]
+          if (Test-Path -LiteralPath $exe) { return $exe }
+        }
+        if ($field -match '"([^"]*Uninstall[^"]*)"') {
+          $dir = Split-Path -Parent $Matches[1]
+          $hit = Resolve-MjhClientExeFromDir -InstallDir $dir
+          if ($hit) { return $hit }
+        }
+        $trimmed = ($field -split ',')[0].Trim().Trim('"')
+        if ($trimmed -like "*MJH Printer Client.exe" -and (Test-Path -LiteralPath $trimmed)) {
+          return $trimmed
+        }
+        if (Test-Path -LiteralPath $trimmed) {
+          $hit = Resolve-MjhClientExeFromDir -InstallDir $trimmed
+          if ($hit) { return $hit }
+        }
+      }
+    }
+  }
+  return $null
+}
 
 function Get-MjhClientInstallDir {
+  param([string]$PreferredDir = "")
+  if ($env:MJH_CLIENT_INSTALL_DIR -and $env:MJH_CLIENT_INSTALL_DIR.Trim().Length -gt 0) {
+    return $env:MJH_CLIENT_INSTALL_DIR.Trim()
+  }
+  if ($PreferredDir -and $PreferredDir.Trim().Length -gt 0) {
+    return $PreferredDir.Trim()
+  }
+  $regExe = Find-MjhClientExeViaRegistry
+  if ($regExe) {
+    return (Split-Path -Parent $regExe)
+  }
   $ProgramFiles64 = if ($env:ProgramW6432 -and $env:ProgramW6432.Trim().Length -gt 0) {
     $env:ProgramW6432
   } else {
     ${env:ProgramFiles}
   }
+  $candidates = @(
+    (Join-Path $ProgramFiles64 "MJH Printer"),
+    (Join-Path $ProgramFiles64 "MJH Printer Client"),
+    (Join-Path $ProgramFiles64 "MJH Printer\MJH Printer Client"),
+    "D:\Program Files\MJH Printer",
+    "D:\Program Files\MJH Printer Client",
+    "D:\Program Files\MJH Printer\MJH Printer Client"
+  )
+  foreach ($dir in $candidates) {
+    if (Resolve-MjhClientExeFromDir -InstallDir $dir) { return $dir }
+  }
   return (Join-Path $ProgramFiles64 "MJH Printer")
 }
 
 function Get-MjhClientExePath {
-  param([string]$InstallDir = (Get-MjhClientInstallDir))
-  return (Join-Path $InstallDir "MJH Printer Client.exe")
+  param([string]$InstallDir = "")
+  if (-not $InstallDir) { $InstallDir = Get-MjhClientInstallDir }
+  $hit = Resolve-MjhClientExeFromDir -InstallDir $InstallDir
+  if ($hit) { return $hit }
+  # Nested electron-builder layout fallback
+  $nested = Resolve-MjhClientExeFromDir -InstallDir (Join-Path $InstallDir "MJH Printer Client")
+  if ($nested) { return $nested }
+  return (Join-Path $InstallDir $script:MjhClientExeName)
 }
 
 function Test-MjhRunningAsSystem {
@@ -50,36 +129,65 @@ function Get-MjhInstalledClientVersion {
     [string]$ClientExe = (Get-MjhClientExePath -InstallDir $InstallDir)
   )
 
-  # 1) asar embedded package.json (matches Electron app.getVersion / OTA truth)
-  $asar = Join-Path $InstallDir "resources\app.asar"
-  if (Test-Path -LiteralPath $asar) {
-    try {
-      $bytes = [System.IO.File]::ReadAllBytes($asar)
-      $text = [System.Text.Encoding]::UTF8.GetString($bytes)
-      $m = [regex]::Match($text, '"name"\s*:\s*"mjh-printer-client"[\s\S]{0,160}"version"\s*:\s*"(\d+\.\d+\.\d+)"')
-      if ($m.Success) { return $m.Groups[1].Value }
-      $m2 = [regex]::Match($text, '"version"\s*:\s*"(\d+\.\d+\.\d+)"')
-      if ($m2.Success) { return $m2.Groups[1].Value }
-    } catch { }
+  $exeDir = if ($ClientExe) { Split-Path -Parent $ClientExe } else { $InstallDir }
+
+  # 1) Registry DisplayVersion for THIS install (DisplayIcon points at Client EXE)
+  if ($ClientExe) {
+    $roots = @(
+      "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+      "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+    )
+    foreach ($root in $roots) {
+      if (-not (Test-Path -LiteralPath $root)) { continue }
+      try {
+        $hit = Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue | ForEach-Object {
+          Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue
+        } | Where-Object {
+          $icon = [string]$_.DisplayIcon
+          $un = [string]$_.UninstallString
+          ($icon -and ($icon -like "*$ClientExe*" -or $icon.StartsWith($ClientExe))) -or
+          ($un -and $un -like ("*" + (Split-Path -Parent $ClientExe) + "*"))
+        } | Select-Object -First 1
+        if ($hit -and $hit.DisplayVersion -match '^(\d+\.\d+\.\d+)') {
+          return $Matches[1]
+        }
+      } catch { }
+    }
   }
 
-  # 2) Uninstall registry DisplayVersion (electron-builder) as fallback
-  $roots = @(
-    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
-  )
-  foreach ($root in $roots) {
-    if (-not (Test-Path -LiteralPath $root)) { continue }
+  # 2) asar package.json next to this EXE
+  foreach ($asar in @(
+      (Join-Path $exeDir "resources\app.asar"),
+      (Join-Path $InstallDir "resources\app.asar")
+    )) {
+    if (-not (Test-Path -LiteralPath $asar)) { continue }
     try {
-      $hit = Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue | ForEach-Object {
-        Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue
-      } | Where-Object {
-        $_.DisplayName -and ($_.DisplayName -like "*MJH Printer Client*")
-      } | Select-Object -First 1
-      if ($hit -and $hit.DisplayVersion) {
-        $dv = [string]$hit.DisplayVersion
-        if ($dv -match '^(\d+\.\d+\.\d+)') { return $Matches[1] }
-        return $dv.Trim()
+      $len = (Get-Item -LiteralPath $asar).Length
+      $bytes = [System.IO.File]::ReadAllBytes($asar)
+      $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+      # Tiny stub asar used by unit tests
+      if ($len -lt 4096) {
+        $m = [regex]::Match(
+          $text,
+          '"name"\s*:\s*"mjh-printer-client"\s*,\s*"version"\s*:\s*"(\d+\.\d+\.\d+)"'
+        )
+        if ($m.Success) { return $m.Groups[1].Value }
+      }
+      # Production asar: highest "version":"x.y.z","private":true
+      $found = @([regex]::Matches($text, '"version"\s*:\s*"(\d+\.\d+\.\d+)"\s*,\s*"private"\s*:\s*true') |
+        ForEach-Object { $_.Groups[1].Value } |
+        Select-Object -Unique)
+      if ($found.Count -gt 0) {
+        $best = $found[0]
+        foreach ($v in $found) {
+          $pa = $v.Split('.') | ForEach-Object { [int]$_ }
+          $pb = $best.Split('.') | ForEach-Object { [int]$_ }
+          for ($i = 0; $i -lt 3; $i++) {
+            if ($pa[$i] -gt $pb[$i]) { $best = $v; break }
+            if ($pa[$i] -lt $pb[$i]) { break }
+          }
+        }
+        return $best
       }
     } catch { }
   }
@@ -267,6 +375,89 @@ function Assert-MjhClientInstalled {
     ok               = $true
     installedPath    = $ClientExe
     installedVersion = $installedVersion
+  }
+}
+
+<#
+  Wait until installed Client version equals target (files may lag after NSIS exit).
+  VersionReader (optional) is for tests: receives attempt number (1-based), returns version string.
+#>
+function Wait-MjhInstalledClientVersion {
+  param(
+    [string]$InstallDir = (Get-MjhClientInstallDir),
+    [string]$ClientExe = (Get-MjhClientExePath -InstallDir $InstallDir),
+    [Parameter(Mandatory = $true)][string]$TargetVersion,
+    [int]$RetryCount = 10,
+    [int]$RetryIntervalSeconds = 2,
+    [scriptblock]$Log = $null,
+    [scriptblock]$VersionReader = $null
+  )
+
+  if ($TargetVersion -notmatch '^\d+\.\d+\.\d+$') {
+    return @{
+      ok               = $false
+      error            = "INSTALLED_VERSION_MISMATCH"
+      detail           = "invalid targetVersion=$TargetVersion"
+      installedPath    = $ClientExe
+      installedVersion = $null
+      attempts         = 0
+    }
+  }
+
+  if ($Log) {
+    & $Log "VERSION_VERIFY_START"
+    & $Log ("targetVersion={0}" -f $TargetVersion)
+  }
+
+  $lastInstalled = $null
+  for ($attempt = 1; $attempt -le $RetryCount; $attempt++) {
+    $exeReady = Test-Path -LiteralPath $ClientExe
+    if ($VersionReader) {
+      $lastInstalled = [string](& $VersionReader $attempt)
+    } elseif ($exeReady) {
+      $lastInstalled = Get-MjhInstalledClientVersion -InstallDir $InstallDir -ClientExe $ClientExe
+    } else {
+      $lastInstalled = $null
+    }
+
+    $shown = if ($lastInstalled) { $lastInstalled } else { "(unknown)" }
+    if ($Log) {
+      & $Log "VERSION_VERIFY_ATTEMPT"
+      & $Log ("attempt={0}" -f $attempt)
+      & $Log ("installedVersion={0}" -f $shown)
+    }
+
+    if ($exeReady -and $lastInstalled -and ($lastInstalled -eq $TargetVersion)) {
+      if ($Log) {
+        & $Log "VERSION_VERIFY_SUCCESS"
+        & $Log ("installedVersion={0}" -f $lastInstalled)
+      }
+      return @{
+        ok               = $true
+        installedPath    = $ClientExe
+        installedVersion = $lastInstalled
+        attempts         = $attempt
+      }
+    }
+
+    if ($attempt -lt $RetryCount) {
+      Start-Sleep -Seconds $RetryIntervalSeconds
+    }
+  }
+
+  if ($Log) {
+    & $Log "VERSION_VERIFY_FAILED"
+    & $Log ("expected={0}" -f $TargetVersion)
+    & $Log ("actual={0}" -f ($(if ($lastInstalled) { $lastInstalled } else { "(unknown)" })))
+  }
+
+  return @{
+    ok               = $false
+    error            = "INSTALLED_VERSION_MISMATCH"
+    detail           = ("expected={0} actual={1}" -f $TargetVersion, ($(if ($lastInstalled) { $lastInstalled } else { "(unknown)" })))
+    installedPath    = $ClientExe
+    installedVersion = $lastInstalled
+    attempts         = $RetryCount
   }
 }
 

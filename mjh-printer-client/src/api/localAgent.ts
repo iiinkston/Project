@@ -55,6 +55,20 @@ export type DiscoverHit = {
   reachable: true;
 };
 
+export type NetworkDiagnostics = {
+  adapterName: string | null;
+  ipv4: string;
+  subnet: string;
+  gateway: string | null;
+  scanFrom: string;
+  scanTo: string;
+};
+
+export type DiscoverResult = NetworkDiagnostics & {
+  scanned: number;
+  printers: DiscoverHit[];
+};
+
 export type BindResult = {
   success: true;
   storeName: string;
@@ -111,11 +125,12 @@ export const localAgent = {
       method: "POST",
       body: "{}",
     }),
+  network: () => request<NetworkDiagnostics>("/local/network"),
   discover: () =>
-    request<{ subnet: string; scanned: number; printers: DiscoverHit[] }>(
-      "/local/printer/discover",
-      { method: "POST", body: "{}" },
-    ),
+    request<DiscoverResult>("/local/printer/discover", {
+      method: "POST",
+      body: "{}",
+    }),
   setPrinter: (ip: string, port = 9100) =>
     request<{ ok: boolean; message?: string; error?: string }>("/local/printer/config", {
       method: "POST",

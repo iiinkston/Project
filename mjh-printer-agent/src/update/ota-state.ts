@@ -34,7 +34,11 @@ export function readOtaState(): OtaPersistedState {
 export function writeOtaState(patch: Partial<OtaPersistedState>): OtaPersistedState {
   const next = { ...readOtaState(), ...patch };
   const path = resolveOtaStatePath();
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  } catch {
+    // ProgramData may be ACL-locked on some hosts; never fail Local API check/download on persist.
+  }
   return next;
 }

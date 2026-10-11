@@ -5,7 +5,15 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { loadFileConfig } from "../config.js";
 import { redactLogLine, handleLocalStatus, handlePrinterConfig } from "./router.js";
-import { subnetPrefix, resolveLanIpv4 } from "./discover.js";
+import {
+  subnetPrefix,
+  resolveLanIpv4,
+  resolveLanContext,
+  buildLanDiagnostics,
+  listLanCandidates,
+  isExcludedInterfaceName,
+  isPreferredInterfaceName,
+} from "./discover.js";
 import { LOCAL_API_HOST, LOCAL_API_PORT } from "./types.js";
 import { startLocalHttpServer } from "./http-server.js";
 
@@ -17,9 +25,61 @@ test("redactLogLine masks Bearer and token JSON", () => {
   assert.equal(b.includes("super-secret-token-value-here"), false);
 });
 
-test("subnetPrefix derives /24", () => {
-  assert.equal(subnetPrefix("192.168.0.110"), "192.168.0");
-  assert.ok(resolveLanIpv4());
+test("buildLanDiagnostics: target-store style 192.168.1.117/24 → scan 1-254", () => {
+  const d = buildLanDiagnostics({
+    ipv4: "192.168.1.117",
+    gateway: "192.168.1.1",
+    adapterName: "Wi-Fi",
+  });
+  assert.equal(d.ipv4, "192.168.1.117");
+  assert.equal(d.subnet, "192.168.1.0/24");
+  assert.equal(d.gateway, "192.168.1.1");
+  assert.equal(d.scanFrom, "192.168.1.1");
+  assert.equal(d.scanTo, "192.168.1.254");
+  assert.equal(d.adapterName, "Wi-Fi");
+});
+
+test("buildLanDiagnostics remains generic for 192.168.0 / 10 / 172", () => {
+  assert.equal(buildLanDiagnostics({ ipv4: "192.168.0.50" }).subnet, "192.168.0.0/24");
+  assert.equal(buildLanDiagnostics({ ipv4: "10.8.1.20" }).scanFrom, "10.8.1.1");
+  assert.equal(buildLanDiagnostics({ ipv4: "172.16.4.9" }).scanTo, "172.16.4.254");
+});
+
+test("subnetPrefix derives /24 from live address (not hard-coded)", () => {
+  assert.equal(subnetPrefix("192.168.1.117"), "192.168.1");
+  assert.equal(subnetPrefix("10.0.5.20"), "10.0.5");
+  assert.ok(resolveLanIpv4(undefined, { resolveGateway: false }));
+});
+
+test("listLanCandidates excludes Hyper-V/Docker/WSL/VPN-like adapters", () => {
+  assert.equal(isExcludedInterfaceName("vEthernet (Default Switch)"), true);
+  assert.equal(isExcludedInterfaceName("DockerNAT"), true);
+  assert.equal(isExcludedInterfaceName("vEthernet (WSL)"), true);
+  assert.equal(isExcludedInterfaceName("Tailscale"), true);
+  assert.equal(isExcludedInterfaceName("Ethernet"), false);
+  assert.equal(isPreferredInterfaceName("Wi-Fi"), true);
+  const nets = {
+    "vEthernet (Default Switch)": [
+      { address: "172.28.0.1", netmask: "255.255.255.0", family: "IPv4" as const, mac: "", internal: false, cidr: null },
+    ],
+    Ethernet: [
+      { address: "192.168.1.117", netmask: "255.255.255.0", family: "IPv4" as const, mac: "", internal: false, cidr: null },
+    ],
+    "Loopback Pseudo-Interface 1": [
+      { address: "127.0.0.1", netmask: "255.0.0.0", family: "IPv4" as const, mac: "", internal: true, cidr: null },
+    ],
+  };
+  const c = listLanCandidates(nets);
+  assert.equal(c.length, 1);
+  assert.equal(c[0]!.address, "192.168.1.117");
+  const ctx = resolveLanContext(nets, {
+    resolveWindows: false,
+    windowsPick: { name: "Ethernet", ipv4: "192.168.1.117", gateway: "192.168.1.1" },
+  });
+  assert.equal(ctx.subnet, "192.168.1.0/24");
+  assert.equal(ctx.gateway, "192.168.1.1");
+  assert.equal(ctx.scanFrom, "192.168.1.1");
+  assert.equal(ctx.scanTo, "192.168.1.254");
 });
 
 test("LOCAL_API binds constants are localhost only", () => {
@@ -34,7 +94,7 @@ test("handleLocalStatus never exposes token/storeId/agentId", async () => {
   assert.equal(/storeId/i.test(text), false);
   assert.equal(/agentId/i.test(text), false);
   assert.ok(status.version);
-  assert.ok(status.printer.ip);
+  assert.equal(typeof status.printer.ip, "string");
   assert.equal(typeof status.bound, "boolean");
   assert.ok("storeName" in status);
   assert.equal(status.running, true);
@@ -58,6 +118,9 @@ test("compareVersions and update check expose no secrets", async () => {
 });
 
 test("GET /local/update/check via http", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "mjh-ota-check-"));
+  const prev = process.env.MJH_PROGRAMDATA_DIR;
+  process.env.MJH_PROGRAMDATA_DIR = dir;
   const port = 17992;
   const api = await startLocalHttpServer({ host: "127.0.0.1", port });
   try {
@@ -73,6 +136,9 @@ test("GET /local/update/check via http", async () => {
     assert.equal(JSON.stringify(body).includes("token"), false);
   } finally {
     await api.close();
+    if (prev === undefined) delete process.env.MJH_PROGRAMDATA_DIR;
+    else process.env.MJH_PROGRAMDATA_DIR = prev;
+    await rm(dir, { recursive: true, force: true });
   }
 });
 

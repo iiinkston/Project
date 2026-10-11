@@ -405,7 +405,8 @@ export async function runConfigSet(argv: string[]): Promise<{ exitCode: 0 | 1 | 
         printer: {
           name: patch.printerName || "Kitchen",
           model: patch.printerModel || "XP-N160II",
-          ip: patch.printerIp || "192.168.0.110",
+          // No hard-coded store subnet; owner must discover/select printer IP.
+          ip: patch.printerIp || "",
           port: patch.printerPort ?? 9100,
           encoding: "gb18030",
           connectTimeoutMs: patch.connectTimeoutMs ?? 3000,

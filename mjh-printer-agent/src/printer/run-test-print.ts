@@ -60,6 +60,15 @@ export type RunTestPrintResult = {
 
 export async function runTestPrint(): Promise<RunTestPrintResult> {
   const { printer } = loadFileConfig();
+  if (!printer.ip?.trim()) {
+    return {
+      ok: false,
+      message: "Printer IP not configured. Open Printer Settings → Discover → select XP-N160II.",
+      printerIp: "",
+      printerPort: printer.port,
+      printerModel: printer.model,
+    };
+  }
   const client = new PrinterClient(printer);
 
   try {

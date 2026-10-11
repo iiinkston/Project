@@ -6,6 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ProductName = "MJH Printer Agent"
 $TaskName = "MJH Printer Agent"
+$UpdateTaskName = "MJH Printer Agent Update"
 $ProgramFiles64 = if ($env:ProgramW6432 -and $env:ProgramW6432.Trim().Length -gt 0) {
   $env:ProgramW6432
 } else {
@@ -17,12 +18,14 @@ $ProgramDataDir = Join-Path $env:ProgramData $ProductName
 
 Write-Host "=== Uninstalling $ProductName ==="
 
-$existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-if ($existing) {
-  Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-  Start-Sleep -Seconds 2
-  Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
-  Write-Host "Scheduled task removed."
+foreach ($tn in @($TaskName, $UpdateTaskName)) {
+  $existing = Get-ScheduledTask -TaskName $tn -ErrorAction SilentlyContinue
+  if ($existing) {
+    Stop-ScheduledTask -TaskName $tn -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+    Unregister-ScheduledTask -TaskName $tn -Confirm:$false -ErrorAction SilentlyContinue
+    Write-Host "Scheduled task removed: $tn"
+  }
 }
 
 Get-Process -Name "MJH-Printer-Agent" -ErrorAction SilentlyContinue |
@@ -46,7 +49,7 @@ if ($PurgeData) {
     Write-Host "Purged $ProgramDataDir"
   }
 } else {
-  Write-Host "ProgramData retained at $ProgramDataDir (use -PurgeData to delete)."
+  Write-Host "ProgramData retained at $ProgramDataDir (use -PurgeData to delete pairing/printer config)."
 }
 
 Write-Host "Uninstall complete."

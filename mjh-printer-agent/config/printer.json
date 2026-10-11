@@ -1,16 +1,15 @@
 {
   "store": {
-    "id": "cmu3wzuqf0000pehac8liewp5"
+    "id": "unbound"
   },
   "agent": {
     "id": "kitchen-1",
-    "token": "L7KP6AZ3kB7vh1XN5VzPS+/HmciJxxB0GNrDTnrUAL0=",
     "pollIntervalMs": 3000
   },
   "printer": {
     "name": "Kitchen",
     "model": "XP-N160II",
-    "ip": "192.168.0.110",
+    "ip": "",
     "port": 9100,
     "encoding": "gb18030",
     "connectTimeoutMs": 3000

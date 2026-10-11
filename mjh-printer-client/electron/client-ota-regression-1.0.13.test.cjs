@@ -232,3 +232,99 @@ test("regression: apply-request carries 1.0.13 + sha for helper", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("regression: delayed installed version becomes target => verify PASS", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "mjh-reg-delay-ok-"));
+  try {
+    const exe = join(dir, "MJH Printer Client.exe");
+    await writeFile(exe, "x", "utf8");
+    const logs = [];
+    const probe = runPs(`
+$logs = New-Object System.Collections.Generic.List[string]
+$log = { param($m) [void]$logs.Add([string]$m) }
+$reader = {
+  param($attempt)
+  if ($attempt -lt 3) { return '1.0.8' }
+  return '1.0.14'
+}
+$r = Wait-MjhInstalledClientVersion -InstallDir '${dir.replace(/'/g, "''")}' -ClientExe '${exe.replace(/'/g, "''")}' -TargetVersion '1.0.14' -RetryCount 5 -RetryIntervalSeconds 0 -Log $log -VersionReader $reader
+@{
+  ok = $r.ok
+  installedVersion = $r.installedVersion
+  attempts = $r.attempts
+  logs = @($logs)
+} | ConvertTo-Json -Compress -Depth 4
+`);
+    assert.equal(probe.status, 0, probe.stderr || probe.stdout);
+    const j = lastJson(probe.stdout);
+    assert.equal(j.ok, true);
+    assert.equal(j.installedVersion, "1.0.14");
+    assert.ok(j.attempts >= 3, `expected attempts>=3 got ${j.attempts}`);
+    const logText = Array.isArray(j.logs) ? j.logs.join("\n") : String(j.logs || "");
+    assert.match(logText, /VERSION_VERIFY_START/);
+    assert.match(logText, /VERSION_VERIFY_ATTEMPT/);
+    assert.match(logText, /VERSION_VERIFY_SUCCESS/);
+    assert.doesNotMatch(logText, /VERSION_VERIFY_FAILED/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("regression: delayed version never reaches target => INSTALLED_VERSION_MISMATCH", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "mjh-reg-delay-fail-"));
+  try {
+    const exe = join(dir, "MJH Printer Client.exe");
+    await writeFile(exe, "x", "utf8");
+    const probe = runPs(`
+$logs = New-Object System.Collections.Generic.List[string]
+$log = { param($m) [void]$logs.Add([string]$m) }
+$reader = { param($attempt) return '1.0.8' }
+$r = Wait-MjhInstalledClientVersion -InstallDir '${dir.replace(/'/g, "''")}' -ClientExe '${exe.replace(/'/g, "''")}' -TargetVersion '1.0.14' -RetryCount 3 -RetryIntervalSeconds 0 -Log $log -VersionReader $reader
+@{
+  ok = $r.ok
+  error = $r.error
+  installedVersion = $r.installedVersion
+  attempts = $r.attempts
+  logs = @($logs)
+} | ConvertTo-Json -Compress -Depth 4
+`);
+    assert.equal(probe.status, 0, probe.stderr || probe.stdout);
+    const j = lastJson(probe.stdout);
+    assert.equal(j.ok, false);
+    assert.equal(j.error, "INSTALLED_VERSION_MISMATCH");
+    assert.equal(j.installedVersion, "1.0.8");
+    assert.equal(j.attempts, 3);
+    const logText = Array.isArray(j.logs) ? j.logs.join("\n") : String(j.logs || "");
+    assert.match(logText, /VERSION_VERIFY_FAILED/);
+    assert.match(logText, /expected=1\.0\.14/);
+    assert.match(logText, /actual=1\.0\.8/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("unified installer: post-install health gate + uninstall task cleanup markers", async () => {
+  const { readFile } = require("node:fs/promises");
+  const launch = await readFile(
+    join(__dirname, "..", "scripts", "launch-client-after-install.ps1"),
+    "utf8",
+  );
+  assert.match(launch, /127\.0\.0\.1:17890\/local\/health/);
+  assert.match(launch, /installer-start\.log/);
+  assert.match(launch, /INSTALLER_HEALTH_/);
+  assert.match(launch, /Invoke-MjhUserSessionRestart/);
+  assert.match(launch, /MaxAttempts\s*=\s*30/);
+
+  const nsis = await readFile(join(__dirname, "..", "installer", "nsis-agent.nsh"), "utf8");
+  assert.match(nsis, /launch-client-after-install\.ps1/);
+  assert.match(nsis, /打印服务启动失败/);
+  assert.match(nsis, /MJH Printer Client Update/);
+  assert.match(nsis, /MJH Printer Agent Update/);
+  assert.match(nsis, /IfSilent/);
+
+  const pkg = JSON.parse(
+    await readFile(join(__dirname, "..", "package.json"), "utf8"),
+  );
+  assert.equal(pkg.build.nsis.uninstallDisplayName, "满江红打印助手");
+  assert.equal(pkg.build.nsis.shortcutName, "满江红打印助手");
+});

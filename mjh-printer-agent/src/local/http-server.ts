@@ -9,6 +9,7 @@ import {
   handleLocalUpdateCheck,
   handleLocalUpdateDownload,
   handleLocalUpdateStatus,
+  handleLocalNetwork,
   handlePrinterConfig,
   handlePrinterDiscover,
   handlePrinterTest,
@@ -131,6 +132,10 @@ export async function startLocalHttpServer(options?: {
       }
       if (req.method === "GET" && path === "/local/health") {
         sendJson(res, 200, { ok: true });
+        return;
+      }
+      if (req.method === "GET" && path === "/local/network") {
+        sendJson(res, 200, handleLocalNetwork());
         return;
       }
       if (req.method === "GET" && path === "/local/update/check") {

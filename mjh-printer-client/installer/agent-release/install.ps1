@@ -177,17 +177,9 @@ if (Test-Path $TargetConfig) {
   if (-not (Test-Path $pkgConfig)) {
     $pkgConfig = Join-Path $PackageRoot "config\printer.json"
   }
-  $devUnbound = "D:\Project\mjh-printer-agent\config\printer.unbound.json"
-  $devConfig = "D:\Project\mjh-printer-agent\config\printer.json"
   if (Test-Path $pkgConfig) {
     Copy-Item $pkgConfig $TargetConfig
     Write-Host "Seeded package config to ProgramData (first install)."
-  } elseif (Test-Path $devUnbound) {
-    Copy-Item $devUnbound $TargetConfig
-    Write-Host "Seeded unbound config to ProgramData (first install)."
-  } elseif (Test-Path $devConfig) {
-    Copy-Item $devConfig $TargetConfig
-    Write-Host "Seeded development config to ProgramData (first install)."
   } else {
     Write-Warning "No printer.json found to seed. Create $TargetConfig before starting."
   }
@@ -197,13 +189,9 @@ if (Test-Path $TargetConfig) {
 $TargetUpdateConfig = Join-Path $ConfigDir "update.json"
 if (-not (Test-Path $TargetUpdateConfig)) {
   $pkgUpdate = Join-Path $PackageRoot "config\update.json"
-  $devUpdate = "D:\Project\mjh-printer-agent\config\update.json"
   if (Test-Path $pkgUpdate) {
     Copy-Item $pkgUpdate $TargetUpdateConfig
     Write-Host "Seeded update.json to ProgramData (OTA disabled by default)."
-  } elseif (Test-Path $devUpdate) {
-    Copy-Item $devUpdate $TargetUpdateConfig
-    Write-Host "Seeded development update.json to ProgramData."
   }
 }
 

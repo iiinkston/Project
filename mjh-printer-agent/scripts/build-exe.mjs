@@ -213,13 +213,14 @@ mkdirSync(releaseDir, { recursive: true });
 mkdirSync(join(releaseDir, "config"), { recursive: true });
 
 copyFileSync(exeOut, join(releaseDir, "MJH-Printer-Agent.exe"));
-copyFileSync(join(root, "config", "printer.json"), join(releaseDir, "config", "printer.json"));
+// Production seed is unbound only — never ship a bound token or hard-coded printer IP.
 copyFileSync(
   join(root, "config", "printer.unbound.json"),
   join(releaseDir, "config", "printer.unbound.json"),
 );
 copyFileSync(join(root, "config", "update.json"), join(releaseDir, "config", "update.json"));
 
+// Standalone Agent OTA zip may include admin helpers; unified Setup uses a stricter allowlist.
 const scriptFiles = [
   "install.ps1",
   "uninstall.ps1",
@@ -285,7 +286,6 @@ for (const name of ["MJH-Printer-Agent.exe", "README.md", "BUILD.txt", ...script
   copyFileSync(join(releaseDir, name), join(staging, name));
 }
 mkdirSync(join(staging, "config"), { recursive: true });
-copyFileSync(join(releaseDir, "config", "printer.json"), join(staging, "config", "printer.json"));
 copyFileSync(
   join(releaseDir, "config", "printer.unbound.json"),
   join(staging, "config", "printer.unbound.json"),

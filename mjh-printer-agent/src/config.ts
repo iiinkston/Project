@@ -29,7 +29,8 @@ const fileConfigSchema = z.object({
   printer: z.object({
     name: z.string().min(1),
     model: z.string().min(1),
-    ip: z.string().min(1),
+    // Empty allowed until owner selects a printer via Discover (no hard-coded LAN default).
+    ip: z.string(),
     port: z.number().int().min(1).max(65535),
     encoding: z.literal("gb18030"),
     connectTimeoutMs: z.number().int().positive(),

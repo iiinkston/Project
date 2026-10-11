@@ -219,6 +219,21 @@ jobs:
             -AsarPath $asarPath
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Validate unified installer packaging
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $clientVersion = "${{ steps.ver.outputs.client_version }}"
+          $agentVersion = "${{ steps.ver.outputs.agent_version }}"
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:GITHUB_WORKSPACE\scripts\validate-unified-installer.ps1" `
+            -ExpectedClientVersion $clientVersion `
+            -ExpectedAgentVersion $agentVersion `
+            -WorkspaceRoot $env:GITHUB_WORKSPACE `
+            -SetupPath "$env:GITHUB_WORKSPACE\dist\client-build\MJH Printer Setup.exe" `
+            -AgentReleaseDir "$env:GITHUB_WORKSPACE\mjh-printer-client\installer\agent-release" `
+            -AsarPath "$env:GITHUB_WORKSPACE\dist\client-build\win-unpacked\resources\app.asar"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 
 
       # -------------------------

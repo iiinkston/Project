@@ -15,7 +15,7 @@ import { readStatusFile } from "../status.js";
 import { AGENT_BUILD, AGENT_VERSION } from "../version.js";
 import { runTestPrint } from "../printer/run-test-print.js";
 import { logger } from "../logger.js";
-import { discoverPrinters9100 } from "./discover.js";
+import { discoverPrinters9100, resolveLanContext } from "./discover.js";
 import {
   handleOtaUpdateApply,
   handleOtaUpdateCheck,
@@ -174,6 +174,10 @@ export async function handlePrinterTest(): Promise<LocalOkResponse | LocalErrorR
     return { ok: false, error: result.message };
   }
   return { ok: true, message: result.message };
+}
+
+export function handleLocalNetwork() {
+  return resolveLanContext();
 }
 
 export async function handlePrinterDiscover(): Promise<LocalDiscoverResponse> {
