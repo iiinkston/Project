@@ -234,6 +234,16 @@ jobs:
             -AsarPath "$env:GITHUB_WORKSPACE\dist\client-build\win-unpacked\resources\app.asar"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Validate packaged renderer assets (file:// safe)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & node "$env:GITHUB_WORKSPACE\scripts\validate-packaged-renderer.cjs" `
+            --asar "$env:GITHUB_WORKSPACE\dist\client-build\win-unpacked\resources\app.asar" `
+            --exe "$env:GITHUB_WORKSPACE\dist\client-build\win-unpacked\MJH Printer Client.exe" `
+            --smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 
 
       # -------------------------

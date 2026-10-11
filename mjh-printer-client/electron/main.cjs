@@ -1,6 +1,8 @@
 const { app, BrowserWindow, shell, Tray, Menu, nativeImage, ipcMain } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
+const os = require("node:os");
+const { pathToFileURL } = require("node:url");
 const { createClientUpdateService } = require("./client-update-service.cjs");
 const {
   formatAppStartLog,
@@ -9,6 +11,8 @@ const {
   formatSecondInstanceLog,
   planRendererRecovery,
 } = require("./stability-lib.cjs");
+
+const RENDERER_SMOKE = process.argv.includes("--mjh-renderer-smoke");
 
 /** Fallback tiny 16×16 green circle PNG (base64). */
 const TRAY_ICON_DATA_URL =
@@ -21,7 +25,16 @@ try {
   // ignore
 }
 
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
+// Smoke must not fight a running store Client for the single-instance lock / userData.
+if (RENDERER_SMOKE) {
+  try {
+    app.setPath("userData", path.join(os.tmpdir(), `mjh-renderer-smoke-${process.pid}`));
+  } catch {
+    // ignore
+  }
+}
+
+const gotSingleInstanceLock = RENDERER_SMOKE ? true : app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
   app.quit();
 }
@@ -255,12 +268,84 @@ function createWindow() {
     void mainWindow.loadURL(devUrl);
   } else {
     const htmlPath = resolveRendererHtml();
+    // pathToFileURL keeps directory base so ./assets/* resolves inside app.asar/dist/
+    const fileUrl = pathToFileURL(htmlPath).href;
     logLine(`renderer path=${htmlPath} exists=${fs.existsSync(htmlPath)}`);
     logLine(`__dirname=${__dirname} appPath=${app.getAppPath()}`);
-    logLine(`loadFile ${htmlPath}`);
-    void mainWindow.loadFile(htmlPath).catch((err) => {
-      logLine(`loadFile error ${err}`);
+    logLine(`loadURL ${fileUrl}`);
+    void mainWindow.loadURL(fileUrl).catch((err) => {
+      logLine(`loadURL error ${err}`);
     });
+  }
+
+  if (RENDERER_SMOKE) {
+    const failLoads = [];
+    mainWindow.webContents.on("did-fail-load", (_e, code, desc, url, isMainFrame) => {
+      failLoads.push({ code, desc, url, isMainFrame: Boolean(isMainFrame) });
+      logLine(`RENDERER_SMOKE fail-load code=${code} desc=${desc} url=${url}`);
+    });
+    const finishSmoke = (ok, detail) => {
+      logLine(`RENDERER_SMOKE ok=${ok} ${detail || ""}`);
+      app.isQuitting = true;
+      app.exit(ok ? 0 : 2);
+    };
+    const runProbe = () => {
+      mainWindow.webContents
+        .executeJavaScript(
+          `new Promise((resolve) => {
+            const started = Date.now();
+            const tick = () => {
+              const root = document.getElementById("root");
+              const kids = root ? root.childElementCount : 0;
+              const absAssets = [...document.querySelectorAll("script[src],link[href]")]
+                .map((el) => el.getAttribute("src") || el.getAttribute("href") || "")
+                .filter((u) => typeof u === "string" && (u.startsWith("/assets/") || u.includes("://assets/")));
+              if (kids > 0 || Date.now() - started > 8000) {
+                resolve({
+                  readyState: document.readyState,
+                  rootChildren: kids,
+                  absAssets,
+                  title: document.title || "",
+                  href: location.href || "",
+                });
+                return;
+              }
+              setTimeout(tick, 200);
+            };
+            tick();
+          })`,
+        )
+        .then((info) => {
+          const assetFails = failLoads.filter((f) => /\/assets\//i.test(String(f.url || "")));
+          const ok =
+            info &&
+            info.rootChildren > 0 &&
+            Array.isArray(info.absAssets) &&
+            info.absAssets.length === 0 &&
+            assetFails.length === 0;
+          if (!ok) {
+            logLine(`RENDERER_SMOKE_DETAIL ${JSON.stringify({ info, failLoads })}`);
+          }
+          finishSmoke(
+            ok,
+            `rootChildren=${info && info.rootChildren} failLoads=${failLoads.length} absAssets=${info && info.absAssets && info.absAssets.length}`,
+          );
+        })
+        .catch((err) => {
+          logLine(`RENDERER_SMOKE error ${err}`);
+          app.isQuitting = true;
+          app.exit(3);
+        });
+    };
+    mainWindow.webContents.once("did-finish-load", () => {
+      setTimeout(runProbe, 300);
+    });
+    setTimeout(() => {
+      if (!app.isQuitting) {
+        logLine("RENDERER_SMOKE timeout waiting for did-finish-load");
+        finishSmoke(false, "timeout");
+      }
+    }, 15000);
   }
 }
 
@@ -300,6 +385,15 @@ app.whenReady().then(() => {
     }),
   );
   logLine(`app ready version=${app.getVersion()} exec=${process.execPath}`);
+
+  if (RENDERER_SMOKE) {
+    // Headless packaging smoke: load UI only; skip tray/OTA/autostart.
+    createWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.hide();
+    }
+    return;
+  }
 
   configureAutoLaunch();
   clientUpdate = createClientUpdateService({ app, log: logLine });

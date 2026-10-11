@@ -1,4 +1,4 @@
-﻿# MJH Printer OTA GA Production Validation
+# MJH Printer OTA GA Production Validation
 
 **Date (UTC):** 2026-09-22  
 **Final Decision:** **NOT READY**

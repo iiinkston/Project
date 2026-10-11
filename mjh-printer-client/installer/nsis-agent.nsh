@@ -37,6 +37,9 @@
     Pop $2
     DetailPrint "Post-install health + Client launch (system32) exit: $2"
   install_done:
+  ; Persist the final install root (including user-chosen custom path) for OTA/launch helpers.
+  WriteRegExpandStr HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation "$INSTDIR"
+  WriteRegExpandStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "$INSTDIR"
   StrCmp $2 "0" install_ok
   DetailPrint "Post-install failed (exit $2); see ProgramData\MJH Printer Client\logs\installer-start.log"
   IfSilent install_ok
